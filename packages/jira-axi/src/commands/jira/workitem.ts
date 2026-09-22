@@ -383,7 +383,11 @@ async function viewWorkitem(
   // `parent` is exempt: it is a real field that Jira simply omits when an item
   // is top-level, so its absence is a meaningful state (rendered "none" by the
   // schema below), NOT an unreturned/unknown field. Flagging it as "unknown
-  // field name" is what made an orphaned item look uninspectable.
+  // field name" is what made an orphaned item look uninspectable. Note this
+  // exemption is only possible for KNOWN fields: acli silently omits an unknown
+  // field the same way it omits an empty one, so in general an unreadable field
+  // is indistinguishable from an absent one - an inherent acli limit, which is
+  // why the note exists at all for the fields we cannot special-case.
   if (fields) {
     const nested = item.fields;
     const dropped = fields.filter(
@@ -481,11 +485,15 @@ async function createWorkitem(
   // Parent is a work-item key (the epic/story this item belongs under). Reject a
   // malformed value up front rather than after a network round-trip, mirroring
   // requireKey's shape check. acli owns the semantics (a non-existent or
-  // wrong-hierarchy parent surfaces as an acli error).
-  const parent = parsed.values["--parent"]?.toUpperCase();
-  if (parent && !WORKITEM_KEY.test(parent)) {
+  // wrong-hierarchy parent surfaces as an acli error). Test PRESENCE, not
+  // truthiness: `--parent ""` (e.g. `--parent "$EPIC"` with the var unset) must
+  // be a loud error, not a silent drop back to a top-level item - the very
+  // incident this flag exists to prevent.
+  const rawParent = parsed.values["--parent"];
+  const parent = rawParent?.toUpperCase();
+  if (rawParent !== undefined && !WORKITEM_KEY.test(parent as string)) {
     throw new AxiError(
-      `Invalid --parent: ${JSON.stringify(parsed.values["--parent"])} (expected a work-item key, e.g. TEAM-1)`,
+      `Invalid --parent: ${JSON.stringify(rawParent)} (expected a work-item key, e.g. TEAM-1)`,
       "VALIDATION_ERROR",
       ['Run `jira-axi workitem create ... --parent <KEY>`'],
     );
@@ -550,8 +558,13 @@ async function createWorkitem(
   // The authoritative post-state carries the parent (VIEW_FIELDS requests it).
   // When it came back empty the item is top-level; surface that as suggestion
   // state so `create` can point at --parent - the omission that made the
-  // original incident silent.
-  const orphan = nameOf(fieldOf(item, "parent")) === null;
+  // original incident silent. Computed from the re-fetched item, not the flag,
+  // so it reflects what Jira actually stored. An Epic sits at the top of the
+  // hierarchy and has no parent by design, so it is never "orphaned".
+  const createdType = nameOf(fieldOf(item, "issuetype"));
+  const orphan =
+    nameOf(fieldOf(item, "parent")) === null &&
+    createdType?.toLowerCase() !== "epic";
   return renderOutput([
     renderDetail("workitem", item, workitemViewSchema(false)),
     renderHelp(

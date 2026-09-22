@@ -65,7 +65,7 @@ const table: SuggestionEntry[] = [
     lines: (c) => [
       ...(c.state === "orphan"
         ? [
-            `Created at top level (parent: none). To place it under an epic, recreate with \`jira-axi workitem create ... --parent <EPIC-KEY>\` (parent cannot be set after creation)`,
+            "`parent: none` (top level). Parent can only be set at create time: pass `--parent <EPIC-KEY>` to `jira-axi workitem create`.",
           ]
         : []),
       `Run \`jira-axi workitem view ${c.id}\` to see the full work item`,

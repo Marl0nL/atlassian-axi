@@ -718,24 +718,35 @@ describe("workitem create", () => {
     expect(create!.args[idx + 1]).toBe("TEAM-1");
     // The confirmation now echoes the parent, and does NOT nag about --parent.
     expect(out).toContain("parent: TEAM-1");
-    expect(out).not.toContain("Created at top level");
+    expect(out).not.toContain("Parent can only be set at create time");
   });
 
   it("rejects a malformed --parent before shelling out to acli", async () => {
-    setAcliRunner(makeAcliFake([]).runner);
-    await expect(
-      workitemCommand([
-        "create",
-        "--project",
-        "TEAM",
-        "--type",
-        "Task",
-        "--summary",
-        "x",
-        "--parent",
-        "not-a-key",
-      ]),
-    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    const { runner, calls } = makeAcliFake([]);
+    setAcliRunner(runner);
+    // An empty string must be a loud error, NOT a silent drop to top-level:
+    // `--parent "$EPIC"` with the variable unset reproduces the original
+    // incident through the very flag added to prevent it.
+    for (const [, value] of [
+      ["non-key", "not-a-key"],
+      ["empty string", ""],
+    ] as const) {
+      await expect(
+        workitemCommand([
+          "create",
+          "--project",
+          "TEAM",
+          "--type",
+          "Task",
+          "--summary",
+          "x",
+          "--parent",
+          value,
+        ]),
+      ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    }
+    // Rejected before any acli shell-out.
+    expect(calls).toHaveLength(0);
   });
 
   it("echoes parent: none and nudges toward --parent when created top-level", async () => {
@@ -758,8 +769,37 @@ describe("workitem create", () => {
     // The state that was invisible in the original incident is now explicit,
     // and the suggestion tells the agent how it should have been created.
     expect(out).toContain("parent: none");
-    expect(out).toContain("Created at top level");
+    expect(out).toContain("Parent can only be set at create time");
     expect(out).toContain("--parent <EPIC-KEY>");
+  });
+
+  it("does NOT nudge about --parent when the created item is itself an Epic", async () => {
+    // An Epic has no parent by design, so the top-level nudge would be noise.
+    const epicView = {
+      ...viewCreatedPayload,
+      fields: {
+        ...viewCreatedPayload.fields,
+        issuetype: { id: "10000", name: "Epic", subtask: false },
+      },
+    };
+    const { runner } = makeAcliFake([
+      { match: (args) => args[2] === "create", result: createPayload },
+      { match: isView("TEAM-3"), result: epicView },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand([
+      "create",
+      "--project",
+      "TEAM",
+      "--type",
+      "Epic",
+      "--summary",
+      "New epic",
+    ]);
+
+    expect(out).toContain("parent: none");
+    expect(out).not.toContain("Parent can only be set at create time");
   });
 });
 

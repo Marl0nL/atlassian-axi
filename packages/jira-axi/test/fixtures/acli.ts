@@ -230,6 +230,11 @@ export const viewCreatedPayload = {
 /**
  * A created item that DOES sit under an epic, as `view --json` returns it: the
  * REST `parent` object carries the epic key (collapsed to "TEAM-1" by nameOf).
+ *
+ * DERIVED, not live-captured: built from `viewCreatedPayload` plus a `parent`
+ * object shaped per the Jira REST v3 issue contract (this sits under the
+ * live-capture provenance header above, so its synthetic origin is called out
+ * here).
  */
 export const viewParentedPayload = {
   fields: {
