@@ -55,10 +55,19 @@ const table: SuggestionEntry[] = [
     ],
   },
 
-  // Workitem create
+  // Workitem create. When the created item has no parent (state "orphan"),
+  // lead with the parent nudge: re-parenting after creation is impossible
+  // through acli, so the ONLY way to place an item under an epic is --parent at
+  // create time. Additive, not circular - it points at a flag the create did
+  // not use, never re-runs create.
   {
     match: (c) => c.domain === "workitem" && c.action === "create",
     lines: (c) => [
+      ...(c.state === "orphan"
+        ? [
+            "`parent: none` (top level). Parent can only be set at create time: pass `--parent <EPIC-KEY>` to `jira-axi workitem create`.",
+          ]
+        : []),
       `Run \`jira-axi workitem view ${c.id}\` to see the full work item`,
       `Run \`jira-axi workitem transition ${c.id} --to <status>\` to move it`,
       `Run \`jira-axi workitem assign ${c.id} --assignee <email|@me>\` to assign`,

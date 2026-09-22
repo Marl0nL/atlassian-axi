@@ -190,6 +190,10 @@ async function listWorkitems(
     const dropped = (fields ?? []).filter(
       (name) =>
         name !== "key" &&
+        // `parent` is a real field Jira omits when an item is top-level, so its
+        // absence renders "none" (fieldsSchema), not an unreturned field -
+        // mirror workitem view's exemption or the note contradicts the row.
+        name !== "parent" &&
         items.every((item) => {
           const nested = item.fields;
           const inNested =
