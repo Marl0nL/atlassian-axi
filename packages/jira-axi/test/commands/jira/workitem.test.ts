@@ -8,6 +8,7 @@ import {
   createPayload,
   searchPayload,
   viewCreatedPayload,
+  viewParentedPayload,
   viewPayload,
   viewPayloadDone,
 } from "../../fixtures/acli.js";
@@ -246,6 +247,7 @@ describe("workitem view", () => {
         type: Bug
         status: in progress
         assignee: Jane Doe
+        parent: none
         priority: High
         created: 13d ago
         updated: 1d ago
@@ -462,6 +464,43 @@ describe("workitem view", () => {
     expect(clean).not.toContain("note: acli did not return");
   });
 
+  it("renders parent in the default detail view (key when present)", async () => {
+    const { runner } = makeAcliFake([
+      { match: isView("TEAM-3"), result: viewParentedPayload },
+    ]);
+    setAcliRunner(runner);
+    const out = await workitemCommand(["view", "TEAM-3"]);
+    expect(out).toContain("parent: TEAM-1");
+  });
+
+  it("renders a top-level item's parent as 'none', not an absent field", async () => {
+    // The failure that made the original mistake invisible: a genuinely-absent
+    // parent must read as a definite "none", never disappear or look unreadable.
+    const { runner } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewPayload },
+    ]);
+    setAcliRunner(runner);
+    const out = await workitemCommand(["view", "TEAM-1"]);
+    expect(out).toContain("parent: none");
+  });
+
+  it("renders --fields parent as 'none' for a top-level item WITHOUT the 'unknown field' note", async () => {
+    // parent is a real field Jira omits when empty, so `--fields ...,parent`
+    // must not report it as an unreturned/unknown field.
+    const { runner } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewPayload },
+    ]);
+    setAcliRunner(runner);
+    const out = await workitemCommand([
+      "view",
+      "TEAM-1",
+      "--fields",
+      "summary,parent",
+    ]);
+    expect(out).toContain("parent: none");
+    expect(out).not.toContain("note: acli did not return");
+  });
+
   it("uppercases the key and requires one", async () => {
     const { runner, calls } = makeAcliFake([
       { match: isView("TEAM-1"), result: viewPayload },
@@ -649,6 +688,78 @@ describe("workitem create", () => {
 
     const create = calls.find((c) => c.args[2] === "create");
     expect(create?.bodyFile).toEqual(adf);
+  });
+
+  // The original incident: a ticket meant for an epic was created without a
+  // parent because the flag did not exist, and landed at the top level silently.
+  it("forwards --parent to acli so the item is created under its epic", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: (args) => args[2] === "create", result: createPayload },
+      { match: isView("TEAM-3"), result: viewParentedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand([
+      "create",
+      "--project",
+      "TEAM",
+      "--type",
+      "Task",
+      "--summary",
+      "Cross-repo dependency",
+      "--parent",
+      "team-1",
+    ]);
+
+    const create = calls.find((c) => c.args[2] === "create");
+    // Forwarded, and uppercased to canonical key shape.
+    const idx = create!.args.indexOf("--parent");
+    expect(idx).toBeGreaterThan(-1);
+    expect(create!.args[idx + 1]).toBe("TEAM-1");
+    // The confirmation now echoes the parent, and does NOT nag about --parent.
+    expect(out).toContain("parent: TEAM-1");
+    expect(out).not.toContain("Created at top level");
+  });
+
+  it("rejects a malformed --parent before shelling out to acli", async () => {
+    setAcliRunner(makeAcliFake([]).runner);
+    await expect(
+      workitemCommand([
+        "create",
+        "--project",
+        "TEAM",
+        "--type",
+        "Task",
+        "--summary",
+        "x",
+        "--parent",
+        "not-a-key",
+      ]),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("echoes parent: none and nudges toward --parent when created top-level", async () => {
+    const { runner } = makeAcliFake([
+      { match: (args) => args[2] === "create", result: createPayload },
+      { match: isView("TEAM-3"), result: viewCreatedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand([
+      "create",
+      "--project",
+      "TEAM",
+      "--type",
+      "Task",
+      "--summary",
+      "Top-level task",
+    ]);
+
+    // The state that was invisible in the original incident is now explicit,
+    // and the suggestion tells the agent how it should have been created.
+    expect(out).toContain("parent: none");
+    expect(out).toContain("Created at top level");
+    expect(out).toContain("--parent <EPIC-KEY>");
   });
 });
 

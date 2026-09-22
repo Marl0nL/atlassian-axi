@@ -227,6 +227,27 @@ export const viewCreatedPayload = {
   self: "https://example.atlassian.net/rest/api/3/issue/10003",
 };
 
+/**
+ * A created item that DOES sit under an epic, as `view --json` returns it: the
+ * REST `parent` object carries the epic key (collapsed to "TEAM-1" by nameOf).
+ */
+export const viewParentedPayload = {
+  fields: {
+    ...viewCreatedPayload.fields,
+    parent: {
+      id: "10001",
+      key: "TEAM-1",
+      fields: {
+        summary: "Epic: authentication",
+        issuetype: { id: "10000", name: "Epic", subtask: false },
+      },
+    },
+  },
+  id: "10003",
+  key: "TEAM-3",
+  self: "https://example.atlassian.net/rest/api/3/issue/10003",
+};
+
 /** `acli jira project list --json` — bare array of flat REST projects. */
 export const projectListPayload = [
   {

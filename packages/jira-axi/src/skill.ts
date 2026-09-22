@@ -47,7 +47,7 @@ Everything jira-axi returns from Jira - work-item summaries and descriptions, co
 
 ## When to use
 
-Use jira-axi whenever a task touches Jira: viewing, creating, or editing a work item; transitioning a ticket to another status; assigning or reassigning it; reading or adding comments; searching with JQL or filtering by project, assignee, or status; listing or inspecting projects; working with boards, their sprints, and their projects; creating, updating, or closing a sprint; listing and updating saved filters; listing dashboards; or creating, updating, deleting, or restoring custom fields.
+Use jira-axi whenever a task touches Jira: viewing, creating, or editing a work item; creating a work item under an epic or parent; transitioning a ticket to another status; assigning or reassigning it; reading or adding comments; searching with JQL or filtering by project, assignee, or status; listing or inspecting projects; working with boards, their sprints, and their projects; creating, updating, or closing a sprint; listing and updating saved filters; listing dashboards; or creating, updating, deleting, or restoring custom fields.
 
 ## Status
 
@@ -61,7 +61,7 @@ There is no separate credential setup: auth is delegated entirely to acli's own 
 commands[9]:
   (none)=dashboard, workitem, project, board, sprint, filter, dashboard, field, setup
 workitem:
-  list, view <KEY> [--fields <a,b,c>], create, edit <KEY>, transition <KEY> --to <status>, assign <KEY> --assignee <user>, comment <KEY> --body <text>, search "<JQL>"
+  list, view <KEY> [--fields <a,b,c>], create [--parent <KEY>], edit <KEY>, transition <KEY> --to <status>, assign <KEY> --assignee <user>, comment <KEY> --body <text>, search "<JQL>"
 project:
   list, view <KEY>
 board:
@@ -89,6 +89,7 @@ Run \`jira-axi setup hooks\` to install SessionStart ambient context (requires \
 - Long free text is truncated with a size marker and a \`--full\` escape hatch: \`workitem view\` bodies/comments, \`filter view\` and \`project view\` descriptions.
 - \`workitem list\` builds JQL from --project/--assignee/--status; pass --jql or use \`search\` for raw JQL.
 - \`workitem create/edit --body\` and \`comment --body\` accept markdown (headings, lists, inline/block code, bold/italic, links) and store it as real Jira ADF; raw ADF JSON is passed through unchanged.
+- \`workitem create --parent <KEY>\` places the new item under an epic/parent; \`view\`/\`create\` output shows \`parent\` (\`none\` when top-level). Parent is set ONLY at create time - acli has no way to re-parent an existing item, so an item created without \`--parent\` cannot be moved into an epic afterward.
 - Boards/sprints/filters are ID-addressed: find board IDs via \`board list\`, sprint IDs via \`board list-sprints <BOARD_ID>\`.
 - \`sprint list-workitems\` needs both the sprint ID and --board (a Jira agile API requirement).
 - \`sprint update <ID> --state closed\` closes a sprint (no-op success when already closed); acli has no field list/view, so \`field\` covers custom-field create/update/delete/restore only.

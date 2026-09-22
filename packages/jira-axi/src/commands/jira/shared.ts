@@ -202,6 +202,11 @@ export function workitemViewSchema(full: boolean): FieldDef[] {
       nameOf(fieldOf(item, "status"))?.toLowerCase() ?? "unknown",
     ),
     custom("assignee", assigneeOf),
+    // Epic/parent membership. Renders the parent key when present, an explicit
+    // "none" when the item is top-level - so an item created outside its
+    // intended epic is legible at a glance instead of being an absent field
+    // that no one notices (the failure mode behind the --parent gap).
+    custom("parent", (item: JsonRecord) => nameOf(fieldOf(item, "parent")) ?? "none"),
     custom("priority", (item: JsonRecord) =>
       nameOf(fieldOf(item, "priority")),
     ),
@@ -348,6 +353,12 @@ export function fieldsSchema(fields: string[]): FieldDef[] {
           // "Done" casing, which lowercasing already fixes).
           if (name === "status") {
             return nameOf(fieldOf(item, "status"))?.toLowerCase() ?? "unknown";
+          }
+          // Parent collapses to the epic/parent key; an absent parent is a real
+          // "top-level" state, rendered "none" (not null) so it reads the same
+          // as the detail view and never looks like an unreturned field.
+          if (name === "parent") {
+            return nameOf(fieldOf(item, "parent")) ?? "none";
           }
           if (value && typeof value === "object" && !Array.isArray(value)) {
             const collapsed = nameOf(value);

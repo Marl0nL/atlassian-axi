@@ -37,9 +37,9 @@ flags{list}:
 flags{view}:
   --comments, --limit <n> (comments shown, default 30; requires --comments), --full (complete bodies without truncation), --fields <a,b,c> (render only these fields; key is always included)
 flags{create}:
-  --project <KEY> (required), --type <name> (required), --summary <text> (required), --body <text> or --body-file <path> (markdown description, stored as ADF), --assignee <email|@me>, --label <a,b>
+  --project <KEY> (required), --type <name> (required), --summary <text> (required), --parent <KEY> (place under an epic/parent work item), --body <text> or --body-file <path> (markdown description, stored as ADF), --assignee <email|@me>, --label <a,b>
 flags{edit}:
-  --summary <text>, --body <text> or --body-file <path> (markdown description, stored as ADF), --assignee <email|@me>, --type <name>, --labels <a,b>, --remove-labels <a,b>
+  --summary <text>, --body <text> or --body-file <path> (markdown description, stored as ADF), --assignee <email|@me>, --type <name>, --labels <a,b>, --remove-labels <a,b> (note: parent/epic is set at create time via --parent and CANNOT be changed here - acli's edit has no parent field)
 flags{transition}:
   --to <status> (required; no-op success when already there)
 flags{assign}:
@@ -52,6 +52,7 @@ examples:
   jira-axi workitem list --project TEAM --status "In Progress"
   jira-axi workitem view TEAM-1 --comments
   jira-axi workitem create --project TEAM --type Task --summary "Fix login"
+  jira-axi workitem create --project TEAM --type Task --summary "Sub-task" --parent TEAM-1
   jira-axi workitem transition TEAM-1 --to Done
   jira-axi workitem search "assignee = currentUser() AND resolution = EMPTY"`;
 
@@ -112,7 +113,7 @@ function requireKey(
   // and be parsed as a flag (argv, so not shell injection, but a confusing acli
   // error and a small argument-injection surface), and a non-key like `foo`
   // would only fail after a needless network round-trip.
-  if (!/^[A-Z][A-Z0-9]*-\d+$/.test(key)) {
+  if (!WORKITEM_KEY.test(key)) {
     throw new AxiError(
       `Invalid work item key: ${JSON.stringify(positional)} (expected PROJECT-NUMBER, e.g. TEAM-1)`,
       "VALIDATION_ERROR",
@@ -127,9 +128,14 @@ function requireKey(
 }
 
 // acli view's default field set omits created/updated/priority; request the
-// full detail set explicitly (verified allowed against acli v1.3.22).
+// full detail set explicitly (verified allowed against acli v1.3.22). `parent`
+// rides along so epic/parent membership is always visible - an item created
+// outside its intended epic was otherwise invisible until a separate JQL search.
 const VIEW_FIELDS =
-  "key,summary,status,assignee,description,created,updated,priority,issuetype";
+  "key,summary,status,assignee,description,created,updated,priority,issuetype,parent";
+
+/** Work-item key shape (PROJECT-NUMBER, e.g. TEAM-1), reused by --parent. */
+const WORKITEM_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
 
 /**
  * Fetch one work item by key (acli view --json; tolerate array envelopes).
@@ -374,11 +380,16 @@ async function viewWorkitem(
 
   // Mirror sprint list-workitems: surface --fields values acli did not
   // return, so a `bogus: null` row is never mistaken for an empty field.
+  // `parent` is exempt: it is a real field that Jira simply omits when an item
+  // is top-level, so its absence is a meaningful state (rendered "none" by the
+  // schema below), NOT an unreturned/unknown field. Flagging it as "unknown
+  // field name" is what made an orphaned item look uninspectable.
   if (fields) {
     const nested = item.fields;
     const dropped = fields.filter(
       (name) =>
         name !== "key" &&
+        name !== "parent" &&
         !(nested && typeof nested === "object" && name in nested) &&
         !(name in item),
     );
@@ -446,10 +457,18 @@ async function createWorkitem(
       "--summary",
       "--assignee",
       "--label",
+      "--parent",
     ],
   });
   const parsed = parseFlags(args, {
-    values: ["--project", "--type", "--summary", "--assignee", "--label"],
+    values: [
+      "--project",
+      "--type",
+      "--summary",
+      "--assignee",
+      "--label",
+      "--parent",
+    ],
     consumed: BODY_FLAGS,
   });
   if (parsed.help) return WORKITEM_HELP;
@@ -459,6 +478,18 @@ async function createWorkitem(
   const summary = parsed.values["--summary"];
   const assignee = parsed.values["--assignee"];
   const label = parsed.values["--label"];
+  // Parent is a work-item key (the epic/story this item belongs under). Reject a
+  // malformed value up front rather than after a network round-trip, mirroring
+  // requireKey's shape check. acli owns the semantics (a non-existent or
+  // wrong-hierarchy parent surfaces as an acli error).
+  const parent = parsed.values["--parent"]?.toUpperCase();
+  if (parent && !WORKITEM_KEY.test(parent)) {
+    throw new AxiError(
+      `Invalid --parent: ${JSON.stringify(parsed.values["--parent"])} (expected a work-item key, e.g. TEAM-1)`,
+      "VALIDATION_ERROR",
+      ['Run `jira-axi workitem create ... --parent <KEY>`'],
+    );
+  }
 
   const missing = [
     !project ? "--project" : null,
@@ -494,6 +525,7 @@ async function createWorkitem(
   if (description) acliArgs.push("--description-file", description.path);
   if (assignee) acliArgs.push("--assignee", assignee);
   if (label) acliArgs.push("--label", label);
+  if (parent) acliArgs.push("--parent", parent);
 
   let created: unknown;
   try {
@@ -515,6 +547,11 @@ async function createWorkitem(
   }
 
   const item = await fetchWorkitem(key);
+  // The authoritative post-state carries the parent (VIEW_FIELDS requests it).
+  // When it came back empty the item is top-level; surface that as suggestion
+  // state so `create` can point at --parent - the omission that made the
+  // original incident silent.
+  const orphan = nameOf(fieldOf(item, "parent")) === null;
   return renderOutput([
     renderDetail("workitem", item, workitemViewSchema(false)),
     renderHelp(
@@ -522,6 +559,7 @@ async function createWorkitem(
         domain: "workitem",
         action: "create",
         id: key,
+        state: orphan ? "orphan" : "parented",
         site: ctx,
       }),
     ),
