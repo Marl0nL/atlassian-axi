@@ -26,4 +26,5 @@ Install and invocation guidance lives in [Getting started](./getting-started.md#
 - Long free text truncates by default with a size marker; the detail command that renders it takes `--full` (see [commands](./commands.md)).
 - All structured output is TOON-encoded. There is no plain-text or JSON mode.
 - Mutations are non-interactive (`acli --yes`), idempotent, and re-fetch the post-state; re-running a failed mutation is safe.
-- Per-command help is always available: `jira-axi <resource> --help` (e.g. `jira-axi workitem --help`).
+- Links read as a sentence: `workitem link TEAM-1 --to TEAM-2 --type Blocks` means "TEAM-1 blocks TEAM-2"; pass the inward phrase (`--type "is blocked by"`) or `--reverse` for the other direction. `workitem view` shows a `links` row.
+- Per-command help is always available: `jira-axi <resource> --help` (e.g. `jira-axi workitem --help`); `jira-axi workitem <subcommand> --help` prints one subcommand.

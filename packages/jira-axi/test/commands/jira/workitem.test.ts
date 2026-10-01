@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setAcliRunner } from "../../../src/acli.js";
 import { workitemCommand } from "../../../src/commands/jira/workitem.js";
@@ -5,9 +8,12 @@ import { makeAcliFake, type AcliCall } from "../../helpers/acliFake.js";
 import {
   FROZEN_NOW,
   commentListPayload,
+  LINK_TYPE_OBJECTS,
   createPayload,
+  linkedIssue,
   searchPayload,
   viewCreatedPayload,
+  viewLinkedPayload,
   viewParentedPayload,
   viewPayload,
   viewPayloadDone,
@@ -248,6 +254,7 @@ describe("workitem view", () => {
         status: in progress
         assignee: Jane Doe
         parent: none
+        links: 0
         priority: High
         created: 13d ago
         updated: 1d ago
@@ -499,6 +506,146 @@ describe("workitem view", () => {
     ]);
     expect(out).toContain("parent: none");
     expect(out).not.toContain("note: acli did not return");
+  });
+
+  it("requests issuelinks with the default detail set, in the one view call", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewPayload },
+    ]);
+    setAcliRunner(runner);
+
+    await workitemCommand(["view", "TEAM-1"]);
+    expect(calls).toHaveLength(1);
+    const requested = calls[0].args[calls[0].args.indexOf("--fields") + 1];
+    expect(requested.split(",")).toContain("issuelinks");
+  });
+
+  it("summarizes links inline and points at --links for the rows", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1"]);
+    expect(out).toContain(
+      "links: 3 (blocks TEAM-2; is blocked by OPS-9; relates to OPS-3)",
+    );
+    expect(out).toContain("help[5]:");
+    expect(out).toContain(
+      "Run `jira-axi workitem view TEAM-1 --links` to list its links with status, summary and ids",
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("caps the inline link summary and says how many more there are", async () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({
+      id: String(500 + i),
+      outwardIssue: linkedIssue(`OPS-${i + 1}`, `Item ${i + 1}`, "To Do"),
+      type: LINK_TYPE_OBJECTS.Relates,
+    }));
+    const { runner } = makeAcliFake([
+      {
+        match: isView("TEAM-1"),
+        result: {
+          ...viewPayload,
+          fields: { ...viewPayload.fields, issuelinks: many },
+        },
+      },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1"]);
+    expect(out).toContain(
+      "links: 8 (relates to OPS-1; relates to OPS-2; relates to OPS-3; relates to OPS-4; relates to OPS-5; +3 more)",
+    );
+  });
+
+  it("lists the links with --links from the same payload (no second acli call)", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--links"]);
+    // The rows follow, so the detail row is the bare count, not a repeat.
+    expect(out).toContain("  links: 3\n");
+    // The legend rides with the rows, so `view --links` states the direction
+    // rule exactly as `list-links` does.
+    expect(out).toContain(`count: 3
+reads: TEAM-1 <relation> <key>
+links[3]{relation,key,type,status,summary,id}:
+  blocks,TEAM-2,Blocks,todo,Add audit log export,10042
+  is blocked by,OPS-9,Blocks,wip,Rotate signing keys,10043
+  relates to,OPS-3,Relates,done,"SSO outage, 12 July",10044`);
+    expect(out).toContain("help[4]:");
+    expect(out).not.toContain("--links` to list its links");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("states a definitive empty link list with --links", async () => {
+    const { runner } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--links"]);
+    expect(out).toContain("count: 0\nlinks: 0 work item links on TEAM-1");
+  });
+
+  it("lets --limit govern the --links rows", async () => {
+    const { runner } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--links", "--limit", "1"]);
+    expect(out).toContain("count: 3 (showing first 1 — raise with --limit 3)");
+    expect(out).toContain("links[1]{relation,key,type,status,summary,id}:");
+  });
+
+  it("renders --fields links as the summary, requesting issuelinks from acli", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--fields", "summary,links"]);
+    const requested = calls[0].args[calls[0].args.indexOf("--fields") + 1];
+    expect(requested).toBe("key,summary,issuelinks");
+    expect(out).toContain(
+      "links: 3 (blocks TEAM-2; is blocked by OPS-9; relates to OPS-3)",
+    );
+    // The alias is returned under `issuelinks`, so it is not an unreturned field.
+    expect(out).not.toContain("did not return");
+  });
+
+  it("adds issuelinks to a --fields request when --links is passed", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--fields", "summary", "--links"]);
+    const requested = calls[0].args[calls[0].args.indexOf("--fields") + 1];
+    expect(requested).toBe("key,summary,issuelinks");
+    expect(out).toContain("links[3]{relation,key,type,status,summary,id}:");
+  });
+
+  it("renders links: unknown (never 0) when acli did not return the field", async () => {
+    const withoutLinks: Record<string, unknown> = { ...viewPayload.fields };
+    delete withoutLinks.issuelinks;
+    const { runner } = makeAcliFake([
+      {
+        match: isView("TEAM-1"),
+        result: { ...viewPayload, fields: withoutLinks },
+      },
+    ]);
+    setAcliRunner(runner);
+
+    expect(await workitemCommand(["view", "TEAM-1"])).toContain("links: unknown");
+    expect(await workitemCommand(["view", "TEAM-1", "--links"])).toContain(
+      "links: unknown (acli did not return `issuelinks` for TEAM-1)",
+    );
   });
 
   it("uppercases the key and requires one", async () => {
@@ -1108,7 +1255,16 @@ describe("workitem comment", () => {
     expect(out).toContain("--comments");
   });
 
-  it("treats a body value of --help as text, not a help request", async () => {
+  it("never posts a body that is exactly --help: it is a help request", async () => {
+    const { runner, calls } = makeAcliFake([]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["comment", "TEAM-1", "--body", "--help"]);
+    expect(out).toContain("usage: jira-axi workitem comment <KEY>");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("still posts a body that merely mentions --help", async () => {
     const { runner, calls } = makeAcliFake([
       {
         match: (args) => args[2] === "comment" && args[3] === "create",
@@ -1118,19 +1274,151 @@ describe("workitem comment", () => {
     ]);
     setAcliRunner(runner);
 
-    const out = await workitemCommand(["comment", "TEAM-1", "--body", "--help"]);
-    const create = calls.find(
-      (c) => c.args[2] === "comment" && c.args[3] === "create",
-    );
-    expect(create).toBeDefined();
+    const out = await workitemCommand([
+      "comment",
+      "TEAM-1",
+      "--body",
+      "see the --help output",
+    ]);
+    expect(
+      calls.find((c) => c.args[2] === "comment" && c.args[3] === "create"),
+    ).toBeDefined();
     expect(out).toContain("message: Comment added");
-    expect(out).not.toContain("usage:");
+  });
+
+  it("posts the literal text --help when it comes from --body-file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jira-axi-help-"));
+    const file = join(dir, "body.md");
+    writeFileSync(file, "--help");
+    const { runner, calls } = makeAcliFake([
+      {
+        match: (args) => args[2] === "comment" && args[3] === "create",
+        result: {},
+      },
+      { match: isView("TEAM-1"), result: viewPayload },
+    ]);
+    setAcliRunner(runner);
+    try {
+      const out = await workitemCommand(["comment", "TEAM-1", "--body-file", file]);
+      expect(out).toContain("message: Comment added");
+      const create = calls.find(
+        (c) => c.args[2] === "comment" && c.args[3] === "create",
+      );
+      expect(JSON.stringify(create?.bodyFile)).toContain("--help");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("returns help for `comment --help` instead of a missing-body error", async () => {
     setAcliRunner(makeAcliFake([]).runner);
     const out = await workitemCommand(["comment", "--help"]);
     expect(out).toContain("usage: jira-axi workitem");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// help gate: --help / -h never reaches Jira
+// ---------------------------------------------------------------------------
+
+describe("workitem help gate", () => {
+  // Every mutating subcommand, with the help token in a flag's VALUE position
+  // (where the flag would otherwise swallow it and write it to the ticket) and
+  // trailing a complete, otherwise-valid invocation. `H` is the token.
+  const H = "<help>";
+  const MUTATIONS: Array<[sub: string, args: string[]]> = [
+    ["create", ["create", "--project", "TEAM", "--type", "Task", "--summary", H]],
+    [
+      "create",
+      ["create", "--project", "TEAM", "--type", "Task", "--summary", "S", "--body", H],
+    ],
+    ["create", ["create", "--project", "TEAM", "--type", "Task", "--summary", "S", H]],
+    ["create", ["create", H, "--project", "TEAM", "--type", "Task", "--summary", "S"]],
+    ["edit", ["edit", "TEAM-1", "--summary", H]],
+    ["edit", ["edit", "TEAM-1", "--body", H]],
+    ["edit", ["edit", "TEAM-1", "--labels", H]],
+    ["edit", ["edit", "TEAM-1", "--summary", "New title", H]],
+    ["transition", ["transition", "TEAM-1", "--to", H]],
+    ["transition", ["transition", "TEAM-1", "--to", "Done", H]],
+    ["assign", ["assign", "TEAM-1", "--assignee", H]],
+    ["assign", ["assign", "TEAM-1", "--assignee", "@me", H]],
+    ["comment", ["comment", "TEAM-1", "--body", H]],
+    ["comment", ["comment", "TEAM-1", "--body", "Deployed", H]],
+    ["comment", ["comment", H, "TEAM-1", "--body", "Deployed"]],
+    ["link", ["link", "TEAM-1", "--to", "TEAM-2", "--type", H]],
+    ["link", ["link", "TEAM-1", "--to", H, "--type", "Blocks"]],
+    ["link", ["link", "TEAM-1", "--to", "TEAM-2", "--type", "Blocks", H]],
+    ["unlink", ["unlink", "TEAM-1", "--from", "TEAM-2", "--type", H]],
+    ["unlink", ["unlink", "TEAM-1", "--id", H]],
+    ["unlink", ["unlink", "TEAM-1", "--from", "TEAM-2", H]],
+  ];
+  const cases = ["--help", "-h"].flatMap((token) =>
+    MUTATIONS.map(
+      ([sub, args]) =>
+        [sub, args.map((arg) => (arg === H ? token : arg))] as const,
+    ),
+  );
+
+  it.each(cases)(
+    "%s: prints its help and makes no acli call for %j",
+    async (sub, args) => {
+      // No routes: ANY acli invocation (read or write) throws, and is recorded.
+      const { runner, calls } = makeAcliFake([]);
+      setAcliRunner(runner);
+
+      const out = await workitemCommand([...args]);
+      expect(out).toContain(`usage: jira-axi workitem ${sub}`);
+      expect(out).toContain("examples[");
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  // `--flag=--help` plainly means a VALUE, so it is not served as help - but
+  // it is refused (exit 2) rather than written to the ticket.
+  it.each([
+    ["create", ["create", "--project", "TEAM", "--type", "Task", "--summary=--help"]],
+    ["edit", ["edit", "TEAM-1", "--summary=-h"]],
+    ["edit", ["edit", "TEAM-1", "--body=--help"]],
+    ["transition", ["transition", "TEAM-1", "--to=--help"]],
+    ["assign", ["assign", "TEAM-1", "--assignee=-h"]],
+    ["comment", ["comment", "TEAM-1", "--body=--help"]],
+    ["comment", ["comment", "TEAM-1", "--body=-h"]],
+    ["link", ["link", "TEAM-1", "--to", "TEAM-2", "--type=--help"]],
+    ["unlink", ["unlink", "TEAM-1", "--from", "TEAM-2", "--type=-h"]],
+  ])("%s: refuses %j with exit 2 and makes no acli call", async (sub, args) => {
+    const { runner, calls } = makeAcliFake([]);
+    setAcliRunner(runner);
+
+    await expect(workitemCommand([...args])).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("is never sent to Jira"),
+      suggestions: expect.arrayContaining([
+        `Run \`jira-axi workitem ${sub} --help\` for this subcommand's help`,
+      ]),
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["list", "view", "search", "list-links", "link-types"])(
+    "applies to the read subcommand %s too",
+    async (sub) => {
+      const { runner, calls } = makeAcliFake([]);
+      setAcliRunner(runner);
+      const out = await workitemCommand([sub, "TEAM-1", "-h"]);
+      expect(out).toContain(`usage: jira-axi workitem ${sub}`);
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it("serves the whole-resource help for a bare -h", async () => {
+    expect(await workitemCommand(["-h"])).toContain("subcommands[12]:");
+  });
+
+  it("leaves an unknown subcommand to the did-you-mean error", async () => {
+    await expect(workitemCommand(["vieww", "--help"])).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Unknown workitem subcommand: vieww"),
+    });
   });
 });
 
@@ -1194,5 +1482,47 @@ describe("workitem router", () => {
       code: "VALIDATION_ERROR",
       message: expect.stringContaining("Unknown workitem subcommand: vieww"),
     });
+  });
+
+  it("suggests the link subcommands for near-miss typos", async () => {
+    await expect(workitemCommand(["lnk"])).rejects.toMatchObject({
+      suggestions: expect.arrayContaining(["Did you mean `link`?"]),
+    });
+    await expect(workitemCommand(["link-type"])).rejects.toMatchObject({
+      suggestions: expect.arrayContaining(["Did you mean `link-types`?"]),
+    });
+  });
+
+  it("lists all twelve subcommands in the whole-resource help", async () => {
+    const help = await workitemCommand(["--help"]);
+    expect(help).toContain("subcommands[12]:");
+    expect(help).toContain(
+      'search "<JQL>", link <KEY> --to <KEY> --type <name|phrase>, unlink <KEY> --from <KEY> | --id <n>, list-links <KEY>, link-types',
+    );
+    for (const sub of ["link", "unlink", "list-links"]) {
+      expect(help).toContain(`flags{${sub}}:`);
+    }
+  });
+
+  it.each([
+    "list",
+    "view",
+    "create",
+    "edit",
+    "transition",
+    "assign",
+    "comment",
+    "search",
+  ])("serves subcommand-scoped help for `%s --help`", async (sub) => {
+    setAcliRunner(makeAcliFake([]).runner);
+    const help = await workitemCommand([sub, "--help"]);
+    expect(help).toContain(`usage: jira-axi workitem ${sub}`);
+    expect(help).toContain("examples[");
+    expect(help).toContain(`jira-axi workitem ${sub} `);
+    // Scoped: the link subcommands' flags are not dumped alongside.
+    expect(help).not.toContain("--reverse");
+    expect(help).toContain(
+      "Run `jira-axi workitem --help` for all 12 workitem subcommands",
+    );
   });
 });

@@ -44,10 +44,16 @@ const table: SuggestionEntry[] = [
     ],
   },
 
-  // Workitem view
+  // Workitem view. state "has-links" = the item has links this render only
+  // summarized (no --links), so lead with how to get the rows.
   {
     match: (c) => c.domain === "workitem" && c.action === "view",
     lines: (c) => [
+      ...(c.state === "has-links"
+        ? [
+            `Run \`jira-axi workitem view ${c.id} --links\` to list its links with status, summary and ids`,
+          ]
+        : []),
       `Run \`jira-axi workitem comment ${c.id} --body "..."\` to comment`,
       `Run \`jira-axi workitem transition ${c.id} --to <status>\` to change status`,
       `Run \`jira-axi workitem assign ${c.id} --assignee <email|@me>\` to assign`,
@@ -107,6 +113,64 @@ const table: SuggestionEntry[] = [
     match: (c) => c.domain === "workitem" && c.action === "comment",
     lines: (c) => [
       `Run \`jira-axi workitem view ${c.id} --comments\` to see all comments`,
+    ],
+  },
+
+  // Workitem link. `state` carries the link id (the context has one id slot,
+  // taken by the work item key); additive - the confirmation already shows the
+  // link, so point at the item's other links and at the way back.
+  {
+    match: (c) => c.domain === "workitem" && c.action === "link",
+    lines: (c) => [
+      `Run \`jira-axi workitem list-links ${c.id}\` to see all its links`,
+      `Run \`jira-axi workitem unlink ${c.id} --id ${c.state ?? "<id>"}\` to remove this link`,
+    ],
+  },
+
+  // Workitem unlink
+  {
+    match: (c) => c.domain === "workitem" && c.action === "unlink",
+    lines: (c) => [
+      `Run \`jira-axi workitem list-links ${c.id}\` to see its remaining links`,
+    ],
+  },
+
+  // Workitem list-links
+  {
+    match: (c) =>
+      c.domain === "workitem" && c.action === "list-links" && !c.isEmpty,
+    lines: (c) => [
+      `Run \`jira-axi workitem unlink ${c.id} --id <id>\` to remove a link`,
+      `Run \`jira-axi workitem link ${c.id} --to <KEY> --type <name|phrase>\` to add one`,
+    ],
+  },
+  {
+    match: (c) =>
+      c.domain === "workitem" &&
+      c.action === "list-links" &&
+      c.isEmpty === true,
+    lines: (c) => [
+      `Run \`jira-axi workitem link ${c.id} --to <KEY> --type <name|phrase>\` to add a link`,
+      "Run `jira-axi workitem link-types` to see the link types and their phrases",
+    ],
+  },
+
+  // Workitem link-types
+  {
+    match: (c) =>
+      c.domain === "workitem" && c.action === "link-types" && !c.isEmpty,
+    lines: () => [
+      'Run `jira-axi workitem link <KEY> --to <OTHER> --type <name>` to link "<KEY> <outward> <OTHER>"',
+      'Run `jira-axi workitem link <KEY> --to <OTHER> --type "<inward phrase>"` to link "<KEY> <inward> <OTHER>" (or `--type <name> --reverse`)',
+    ],
+  },
+  {
+    match: (c) =>
+      c.domain === "workitem" &&
+      c.action === "link-types" &&
+      c.isEmpty === true,
+    lines: () => [
+      "Run `acli jira auth status` to verify the login and site",
     ],
   },
 

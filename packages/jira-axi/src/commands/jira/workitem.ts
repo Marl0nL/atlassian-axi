@@ -14,47 +14,43 @@ import {
   renderOutput,
 } from "@atlassian-axi/core";
 import {
+  LINKS_ALIAS,
+  LINKS_FIELD,
+  WORKITEM_KEY,
   commentSchema,
   fieldsSchema,
   fieldOf,
   itemsOf,
+  linksOf,
   nameOf,
   parseFlags,
   parseLimit,
+  quoteJql,
   rejectExtraPositional,
+  requireWorkitemKey as requireKey,
   splitFields,
   totalOf,
   workitemListSchema,
   workitemViewSchema,
   type JsonRecord,
 } from "./shared.js";
+import {
+  WORKITEM_HELP,
+  WORKITEM_SUBCOMMANDS,
+  workitemHelp,
+  workitemHelpRequest,
+} from "./workitem-help.js";
+import {
+  linkWorkitem,
+  listLinkTypes,
+  listWorkitemLinks,
+  renderLinkList,
+  unlinkWorkitem,
+} from "./workitem-links.js";
 
-export const WORKITEM_HELP = `usage: jira-axi workitem <subcommand> [flags]
-subcommands[8]:
-  list, view <KEY>, create, edit <KEY>, transition <KEY>, assign <KEY>, comment <KEY>, search "<JQL>"
-flags{list}:
-  --jql <query> (verbatim; exclusive with the filters below), --project <KEY>, --assignee <email|@me>, --status <name>, --limit <n> (default 30), --fields <a,b,c> (no filters => updated >= -30d window; acli rejects unbounded JQL)
-flags{view}:
-  --comments, --limit <n> (comments shown, default 30; requires --comments), --full (complete bodies without truncation), --fields <a,b,c> (render only these fields; key is always included)
-flags{create}:
-  --project <KEY> (required), --type <name> (required), --summary <text> (required), --parent <KEY> (place under an epic/parent work item), --body <text> or --body-file <path> (markdown description, stored as ADF), --assignee <email|@me>, --label <a,b>
-flags{edit}:
-  --summary <text>, --body <text> or --body-file <path> (markdown description, stored as ADF), --assignee <email|@me>, --type <name>, --labels <a,b>, --remove-labels <a,b> (note: parent/epic is set at create time via --parent and CANNOT be changed here - acli's edit has no parent field)
-flags{transition}:
-  --to <status> (required; no-op success when already there)
-flags{assign}:
-  --assignee <email|@me> (required)
-flags{comment}:
-  --body <text> or --body-file <path> (required; markdown, stored as ADF)
-flags{search}:
-  --limit <n> (default 30), --fields <a,b,c>
-examples:
-  jira-axi workitem list --project TEAM --status "In Progress"
-  jira-axi workitem view TEAM-1 --comments
-  jira-axi workitem create --project TEAM --type Task --summary "Fix login"
-  jira-axi workitem create --project TEAM --type Task --summary "Sub-task" --parent TEAM-1
-  jira-axi workitem transition TEAM-1 --to Done
-  jira-axi workitem search "assignee = currentUser() AND resolution = EMPTY"`;
+// Help lives in workitem-help.ts (one table generates the whole-resource doc
+// and every subcommand-scoped doc); re-exported for existing import sites.
+export { WORKITEM_HELP, workitemHelp };
 
 export async function workitemCommand(
   args: string[],
@@ -62,9 +58,16 @@ export async function workitemCommand(
 ): Promise<string> {
   const sub = args[0];
 
-  if (!sub || sub === "--help") {
+  if (!sub || sub === "--help" || sub === "-h") {
     return WORKITEM_HELP;
   }
+
+  // Help gate, before ANY handler: `--help`/`-h` anywhere after the subcommand
+  // prints that subcommand's help and does nothing else. Without it a body or
+  // value flag would swallow the token (`comment TEAM-1 --body --help`) and a
+  // mutating subcommand would write the text "--help" to a real ticket.
+  const help = workitemHelpRequest(args);
+  if (help !== undefined) return help;
 
   switch (sub) {
     case "list":
@@ -83,11 +86,19 @@ export async function workitemCommand(
       return commentWorkitem(args, ctx);
     case "search":
       return searchWorkitems(args, ctx);
+    case "link":
+      return linkWorkitem(args, ctx);
+    case "unlink":
+      return unlinkWorkitem(args, ctx);
+    case "list-links":
+      return listWorkitemLinks(args, ctx);
+    case "link-types":
+      return listLinkTypes(args, ctx);
     default:
       throw unknownSubcommandError(
         "workitem subcommand",
         sub,
-        ["list", "view", "create", "edit", "transition", "assign", "comment", "search"],
+        WORKITEM_SUBCOMMANDS,
         "jira-axi workitem --help",
       );
   }
@@ -97,57 +108,36 @@ export async function workitemCommand(
 // Shared plumbing
 // ---------------------------------------------------------------------------
 
-function requireKey(
-  args: string[],
-  positional: string | undefined,
-  sub: string,
-): string {
-  if (!positional) {
-    throw new AxiError(`Missing work item key`, "VALIDATION_ERROR", [
-      `Run \`jira-axi workitem ${sub} <KEY> ...\``,
-    ]);
-  }
-  const key = positional.toUpperCase();
-  // Jira work item keys are PROJECT-NUMBER (e.g. TEAM-1). Reject anything else
-  // up front: a value like `-foo` would otherwise reach acli as a POSITIONAL
-  // and be parsed as a flag (argv, so not shell injection, but a confusing acli
-  // error and a small argument-injection surface), and a non-key like `foo`
-  // would only fail after a needless network round-trip.
-  if (!WORKITEM_KEY.test(key)) {
-    throw new AxiError(
-      `Invalid work item key: ${JSON.stringify(positional)} (expected PROJECT-NUMBER, e.g. TEAM-1)`,
-      "VALIDATION_ERROR",
-      [`Run \`jira-axi workitem ${sub} <KEY>\``],
-    );
-  }
-  rejectExtraPositional(
-    args,
-    `This command takes a single <KEY>: jira-axi workitem ${sub} <KEY>`,
-  );
-  return key;
-}
-
 // acli view's default field set omits created/updated/priority; request the
 // full detail set explicitly (verified allowed against acli v1.3.22). `parent`
 // rides along so epic/parent membership is always visible - an item created
 // outside its intended epic was otherwise invisible until a separate JQL search.
-const VIEW_FIELDS =
-  "key,summary,status,assignee,description,created,updated,priority,issuetype,parent";
-
-/** Work-item key shape (PROJECT-NUMBER, e.g. TEAM-1), reused by --parent. */
-const WORKITEM_KEY = /^[A-Z][A-Z0-9]*-\d+$/;
+// `issuelinks` rides along too: the detail view's `links` row (count + inline
+// summary) and `--links` are rendered from this same payload, so an agent
+// reading a ticket sees its links without a second call.
+const VIEW_FIELDS = `key,summary,status,assignee,description,created,updated,priority,issuetype,parent,${LINKS_FIELD}`;
 
 /**
  * Fetch one work item by key (acli view --json; tolerate array envelopes).
  * A user --fields list replaces the default detail set (`key` always rides
- * along so the render can anchor on it).
+ * along so the render can anchor on it); `extra` names fields a flag needs on
+ * top of that list (e.g. `--links` with `--fields summary`).
  */
 async function fetchWorkitem(
   key: string,
   fields?: string[],
+  extra: string[] = [],
 ): Promise<JsonRecord> {
+  // `links` is this CLI's own spelling (the detail view's row name); acli only
+  // knows the Jira field, `issuelinks`.
   const requested = fields
-    ? [...new Set(["key", ...fields])].join(",")
+    ? [
+        ...new Set([
+          "key",
+          ...fields.map((name) => (name === LINKS_ALIAS ? LINKS_FIELD : name)),
+          ...extra,
+        ]),
+      ].join(",")
     : VIEW_FIELDS;
   const payload = await acliJson<unknown>([
     "jira",
@@ -239,7 +229,7 @@ async function listWorkitems(
       "--fields",
     ],
   });
-  if (parsed.help) return WORKITEM_HELP;
+  if (parsed.help) return workitemHelp("list");
 
   const jqlFlag = parsed.values["--jql"];
   const project = parsed.values["--project"];
@@ -301,17 +291,12 @@ function buildJql(filters: {
   return where ? `${where} ORDER BY updated DESC` : DEFAULT_WINDOW_JQL;
 }
 
-/** Quote a JQL string value; backslashes first, then quotes, per JQL escaping. */
-function quoteJql(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
 async function searchWorkitems(
   args: string[],
   ctx?: SiteContext,
 ): Promise<string> {
   const parsed = parseFlags(args, { values: ["--limit", "--fields"] });
-  if (parsed.help) return WORKITEM_HELP;
+  if (parsed.help) return workitemHelp("search");
 
   const jql = parsed.positional;
   if (!jql) {
@@ -341,18 +326,20 @@ async function viewWorkitem(
 ): Promise<string> {
   const parsed = parseFlags(args, {
     values: ["--fields", "--limit"],
-    bools: ["--full", "--comments"],
+    bools: ["--full", "--comments", "--links"],
   });
-  if (parsed.help) return WORKITEM_HELP;
+  if (parsed.help) return workitemHelp("view");
 
   const key = requireKey(args, parsed.positional, "view");
   const full = parsed.bools["--full"];
   const withComments = parsed.bools["--comments"];
-  // `view` has exactly one collection (comments), so --limit governs it.
-  const commentLimit = parseLimit(parsed.values["--limit"]);
-  if (parsed.values["--limit"] !== undefined && !withComments) {
+  const withLinks = parsed.bools["--links"];
+  // `view` has two nested collections (comments, links); --limit governs
+  // whichever were asked for, and is meaningless without either.
+  const listLimit = parseLimit(parsed.values["--limit"]);
+  if (parsed.values["--limit"] !== undefined && !withComments && !withLinks) {
     throw new AxiError(
-      "--limit only applies to the comments list (pass --comments)",
+      "--limit only applies to the comments and links lists (pass --comments or --links)",
       "VALIDATION_ERROR",
       ["Run `jira-axi workitem view <KEY> --comments --limit <n>`"],
     );
@@ -369,12 +356,17 @@ async function viewWorkitem(
     );
   }
 
-  const item = await fetchWorkitem(key, fields);
+  const item = await fetchWorkitem(key, fields, withLinks ? [LINKS_FIELD] : []);
+  const links = linksOf(item);
   const blocks: string[] = [
     renderDetail(
       "workitem",
       item,
-      fields ? fieldsSchema(fields) : workitemViewSchema(full),
+      fields
+        ? fieldsSchema(fields)
+        : // With --links the rows follow below, so the detail row is the bare
+          // count instead of repeating them as an inline summary.
+          workitemViewSchema(full, { linksAsCount: withLinks }),
     ),
   ];
 
@@ -390,18 +382,35 @@ async function viewWorkitem(
   // why the note exists at all for the fields we cannot special-case.
   if (fields) {
     const nested = item.fields;
+    // `links` is this CLI's alias: what acli returns it under is `issuelinks`.
+    const returnedAs = (name: string) =>
+      name === LINKS_ALIAS ? LINKS_FIELD : name;
     const dropped = fields.filter(
       (name) =>
         name !== "key" &&
         name !== "parent" &&
-        !(nested && typeof nested === "object" && name in nested) &&
-        !(name in item),
+        !(
+          nested &&
+          typeof nested === "object" &&
+          returnedAs(name) in nested
+        ) &&
+        !(returnedAs(name) in item),
     );
     if (dropped.length > 0) {
       blocks.push(
         `note: acli did not return field(s) ${dropped.join(", ")} (unknown field name, or unsupported by workitem view)`,
       );
     }
+  }
+
+  if (withLinks) {
+    // Rendered from the payload already in hand - no second acli call. An
+    // unreturned field is said so, never rendered as "0 links".
+    blocks.push(
+      ...(links === undefined
+        ? [`links: unknown (acli did not return \`${LINKS_FIELD}\` for ${key})`]
+        : renderLinkList(key, links, listLimit)),
+    );
   }
 
   if (withComments) {
@@ -417,7 +426,7 @@ async function viewWorkitem(
       "--key",
       key,
       "--limit",
-      String(commentLimit),
+      String(listLimit),
       "--json",
     ]);
     const comments = itemsOf(payload, "comments", "values");
@@ -425,7 +434,7 @@ async function viewWorkitem(
     blocks.push(
       formatCountLine({
         count: comments.length,
-        limit: commentLimit,
+        limit: listLimit,
         ...(total !== undefined ? { totalCount: total } : {}),
       }),
     );
@@ -438,7 +447,18 @@ async function viewWorkitem(
 
   blocks.push(
     renderHelp(
-      getSuggestions({ domain: "workitem", action: "view", id: key, site: ctx }),
+      getSuggestions({
+        domain: "workitem",
+        action: "view",
+        id: key,
+        // Point at the link rows only when there are links this render did not
+        // already list.
+        state:
+          !withLinks && links !== undefined && links.length > 0
+            ? "has-links"
+            : undefined,
+        site: ctx,
+      }),
     ),
   );
   return renderOutput(blocks);
@@ -475,7 +495,7 @@ async function createWorkitem(
     ],
     consumed: BODY_FLAGS,
   });
-  if (parsed.help) return WORKITEM_HELP;
+  if (parsed.help) return workitemHelp("create");
 
   const project = parsed.values["--project"];
   const type = parsed.values["--type"];
@@ -631,7 +651,7 @@ async function editWorkitem(
     ],
     consumed: BODY_FLAGS,
   });
-  if (parsed.help) return WORKITEM_HELP;
+  if (parsed.help) return workitemHelp("edit");
 
   const key = requireKey(args, parsed.positional, "edit");
   const summary = parsed.values["--summary"];
@@ -692,7 +712,7 @@ async function transitionWorkitem(
   ctx?: SiteContext,
 ): Promise<string> {
   const parsed = parseFlags(args, { values: ["--to"] });
-  if (parsed.help) return WORKITEM_HELP;
+  if (parsed.help) return workitemHelp("transition");
 
   const key = requireKey(args, parsed.positional, "transition");
   const to = parsed.values["--to"];
@@ -766,7 +786,7 @@ async function assignWorkitem(
   ctx?: SiteContext,
 ): Promise<string> {
   const parsed = parseFlags(args, { values: ["--assignee"] });
-  if (parsed.help) return WORKITEM_HELP;
+  if (parsed.help) return workitemHelp("assign");
 
   const key = requireKey(args, parsed.positional, "assign");
   const assignee = parsed.values["--assignee"];
@@ -847,7 +867,7 @@ async function commentWorkitem(
   // Optional at first so `comment --help` reaches the help path; enforced below.
   const body = takeBody(args, { label: "comment" });
   const parsed = parseFlags(args, { consumed: BODY_FLAGS });
-  if (parsed.help) return WORKITEM_HELP;
+  if (parsed.help) return workitemHelp("comment");
 
   if (body === undefined) {
     throw new AxiError("--body or --body-file is required", "VALIDATION_ERROR", [

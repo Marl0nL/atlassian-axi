@@ -16,6 +16,20 @@ An empty result under this default window discloses it in a `scope:` line, so `c
 The `--fields` whitelist for `list`/`search` rejects fields absent from list output, e.g. `updated`.
 Inspect time fields with `workitem view <KEY> --fields <a,b,c>` instead (view accepts a broader set).
 
+## Work item links: what acli gives, and what the CLI adds
+
+`link`, `unlink`, `list-links` and `link-types` cover item-to-item links only.
+Remote links (a linked Confluence page or URL) are not supported, and epic/parent membership is the `parent` field, not a link (see `workitem create --parent`).
+
+acli's own link surface is thin, so the CLI reads around it:
+
+- acli's `link list` JSON carries only `{id, outwardIssueKey, typeName}`, with a null key for every link where the listed item is on the outward side. `list-links` and `view --links` therefore read the item's `issuelinks` field instead, which has both ends, the type's phrases, and the other item's summary and status.
+- acli's `link type` returns names only. `link-types` reads each type's phrases off an existing link; a type nothing uses yet falls back to Jira's default phrases (flagged) or `unknown`.
+- acli's `link create`/`link delete` have no `--json` and take `--out`/`--in`, which map verbatim onto Jira's REST `outwardIssue`/`inwardIssue`. That naming is backwards from how it reads: the item that DOES the blocking is `--in`. `jira-axi workitem link` hides this - give it the sentence you mean and check the `relation`/`inverse` rows it prints, which are re-read from Jira.
+
+Linking is not transactional.
+If Jira reports a link that reads the other way round than asked, `link` exits non-zero and prints the `unlink` command for it, rather than leaving a wrong link reported as success.
+
 ## No field list or view
 
 `field` is mutations only: `create`, `update`, `delete`, `restore`.
