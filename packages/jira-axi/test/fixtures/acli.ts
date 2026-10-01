@@ -148,6 +148,9 @@ export const viewPayload = {
         },
       ],
     },
+    // An item without links returns an EMPTY array, not an absent field
+    // (verified live, acli v1.3.30, when `issuelinks` is requested).
+    issuelinks: [],
     issuetype: { id: "10607", name: "Bug", subtask: false },
     priority: { id: "10000", name: "High" },
     status: {
@@ -212,6 +215,7 @@ export const viewCreatedPayload = {
     assignee: null,
     created: "2026-07-14T13:58:00.000+0200",
     description: "Created from atlassian-axi",
+    issuelinks: [],
     issuetype: { id: "10002", name: "Task", subtask: false },
     priority: { id: "10001", name: "Medium" },
     status: {
@@ -629,4 +633,149 @@ export const fieldCreatePayload = {
   searcherKey:
     "com.atlassian.jira.plugin.system.customfieldtypes:textsearcher",
   self: "https://example.atlassian.net/rest/api/3/field/customfield_10500",
+};
+
+// ---------------------------------------------------------------------------
+// Work-item links
+// ---------------------------------------------------------------------------
+
+/**
+ * Link fixtures.
+ *
+ * PROVENANCE: shapes captured LIVE from acli v1.3.30-stable on 2026-10-01
+ * against a real authenticated Jira Cloud site using READ-ONLY calls, then
+ * anonymized (keys, summaries, ids and hosts replaced; structure and field
+ * sets preserved). Verified facts baked into these shapes:
+ *  - `workitem link type --json` returns `{issueLinkTypes: [{name}]}` - type
+ *    NAMES only, no inward/outward phrases.
+ *  - `workitem view KEY --fields key,issuelinks --json` returns the REST issue
+ *    shape; each `fields.issuelinks[]` entry is `{id, self, type: {id, name,
+ *    inward, outward, self}}` plus exactly ONE of `outwardIssue`/`inwardIssue`
+ *    (the other end), itself `{id, key, self, fields: {summary, status,
+ *    priority, issuetype}}`. An item without links returns `issuelinks: []`.
+ *    An entry with `outwardIssue: B` on item A reads "A <outward phrase> B";
+ *    with `inwardIssue: B`, "A <inward phrase> B".
+ *  - `workitem search --fields` REJECTS `issuelinks` ("field 'issuelinks' is
+ *    not allowed"), and `--fields key` alone returns `[null]`.
+ *  - `workitem link list --key KEY --json` (NOT used by the CLI) returns
+ *    `{issueLinks: [{id, outwardIssueKey, typeName}]}` with
+ *    `outwardIssueKey: null` whenever the listed item is the outward end.
+ *  - `workitem link create` has no --json; on success it prints
+ *    `✓ Link between issues has been successfully created (<out> <Type> <in>)`.
+ *    Its direction was observed on a link created earlier by hand:
+ *    `--out A --in B` left A's issuelinks with `inwardIssue: B` (and B's with
+ *    `outwardIssue: A`), i.e. the flags map verbatim onto the REST link.
+ *
+ * NOT captured (no link was created or deleted on the live site for this
+ * work): `link delete` output and any `link create`/`link delete` FAILURE
+ * output. The CLI parses neither - it re-reads the item's links instead.
+ */
+export const linkTypePayload = {
+  issueLinkTypes: [
+    { name: "Blocks" },
+    { name: "Cloners" },
+    { name: "Duplicate" },
+    { name: "Problem/Incident" },
+    { name: "Relates" },
+  ],
+};
+
+/** REST link-type objects as they appear inside an `issuelinks[]` entry. */
+export const LINK_TYPE_OBJECTS: Record<
+  string,
+  { id: string; name: string; inward: string; outward: string; self: string }
+> = {
+  Blocks: {
+    id: "10000",
+    inward: "is blocked by",
+    name: "Blocks",
+    outward: "blocks",
+    self: "https://example.atlassian.net/rest/api/3/issueLinkType/10000",
+  },
+  Cloners: {
+    id: "10001",
+    inward: "is cloned by",
+    name: "Cloners",
+    outward: "clones",
+    self: "https://example.atlassian.net/rest/api/3/issueLinkType/10001",
+  },
+  Duplicate: {
+    id: "10002",
+    inward: "is duplicated by",
+    name: "Duplicate",
+    outward: "duplicates",
+    self: "https://example.atlassian.net/rest/api/3/issueLinkType/10002",
+  },
+  "Problem/Incident": {
+    id: "10004",
+    inward: "is caused by",
+    name: "Problem/Incident",
+    outward: "causes",
+    self: "https://example.atlassian.net/rest/api/3/issueLinkType/10004",
+  },
+  Relates: {
+    id: "10003",
+    inward: "relates to",
+    name: "Relates",
+    outward: "relates to",
+    self: "https://example.atlassian.net/rest/api/3/issueLinkType/10003",
+  },
+};
+
+/** The other end of a link, as nested inside an `issuelinks[]` entry. */
+export function linkedIssue(key: string, summary: string, status: string) {
+  return {
+    fields: {
+      issuetype: { id: "10002", name: "Task", subtask: false },
+      priority: { id: "10001", name: "Medium" },
+      status: { id: "1", name: status },
+      summary,
+    },
+    id: `9${key.replace(/\D/g, "")}`,
+    key,
+    self: `https://example.atlassian.net/rest/api/3/issue/9${key.replace(/\D/g, "")}`,
+  };
+}
+
+/**
+ * `acli jira workitem view TEAM-1 --fields key,issuelinks --json`: TEAM-1
+ * blocks TEAM-2, is blocked by OPS-9, and relates to OPS-3.
+ */
+export const linksViewPayload = {
+  expand:
+    "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  fields: {
+    issuelinks: [
+      {
+        id: "10042",
+        outwardIssue: linkedIssue("TEAM-2", "Add audit log export", "To Do"),
+        self: "https://example.atlassian.net/rest/api/3/issueLink/10042",
+        type: LINK_TYPE_OBJECTS.Blocks,
+      },
+      {
+        id: "10043",
+        inwardIssue: linkedIssue("OPS-9", "Rotate signing keys", "In Progress"),
+        self: "https://example.atlassian.net/rest/api/3/issueLink/10043",
+        type: LINK_TYPE_OBJECTS.Blocks,
+      },
+      {
+        id: "10044",
+        inwardIssue: linkedIssue("OPS-3", "SSO outage, 12 July", "Done"),
+        self: "https://example.atlassian.net/rest/api/3/issueLink/10044",
+        type: LINK_TYPE_OBJECTS.Relates,
+      },
+    ],
+  },
+  id: "10001",
+  key: "TEAM-1",
+  self: "https://example.atlassian.net/rest/api/3/issue/10001",
+};
+
+/** `viewPayload` (the full detail set) for the same linked TEAM-1. */
+export const viewLinkedPayload = {
+  ...viewPayload,
+  fields: {
+    ...viewPayload.fields,
+    issuelinks: linksViewPayload.fields.issuelinks,
+  },
 };

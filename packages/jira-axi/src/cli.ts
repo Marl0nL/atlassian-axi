@@ -5,7 +5,7 @@ import { runAxiCli } from "axi-sdk-js";
 import { closestCommand, renderError } from "@atlassian-axi/core";
 import { homeCommand } from "./commands/home.js";
 import { setupCommand, SETUP_HELP } from "./commands/setup.js";
-import { workitemCommand, WORKITEM_HELP } from "./commands/jira/workitem.js";
+import { workitemCommand } from "./commands/jira/workitem.js";
 import { projectCommand, PROJECT_HELP } from "./commands/jira/project.js";
 import { boardCommand, BOARD_HELP } from "./commands/jira/board.js";
 import { sprintCommand, SPRINT_HELP } from "./commands/jira/sprint.js";
@@ -43,12 +43,16 @@ examples:
   jira-axi setup hooks
 `;
 
-// Each resource owns one monolithic help doc (WORKITEM_HELP etc.). Registering
-// it here lets the SDK serve that help for any `--help` under the resource
-// (`jira-axi workitem --help`, `jira-axi workitem list --help`), so the resource
-// command functions never have to intercept a deep --help themselves.
+// Each resource below owns one monolithic help doc (PROJECT_HELP etc.).
+// Registering it here lets the SDK serve that help for any `--help` under the
+// resource (`jira-axi board --help`, `jira-axi board list --help`), so the
+// resource command functions never have to intercept a deep --help themselves.
+//
+// `workitem` is deliberately absent: registering a command here makes the SDK
+// swallow every deep `workitem ... --help` with the whole-resource doc, and
+// workitem has enough subcommands that it serves SUBCOMMAND-SCOPED help itself
+// (`workitem link --help` -> just `link`), from the table in workitem-help.ts.
 const COMMAND_HELP: Record<string, string> = {
-  workitem: WORKITEM_HELP,
   project: PROJECT_HELP,
   board: BOARD_HELP,
   sprint: SPRINT_HELP,

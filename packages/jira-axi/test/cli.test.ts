@@ -145,6 +145,17 @@ describe("per-resource help routing", () => {
     expect(cap.output()).toContain("usage: jira-axi workitem");
   });
 
+  it("serves subcommand-scoped help for a deep `workitem link --help`", async () => {
+    const cap = capture();
+    await main({ argv: ["workitem", "link", "--help"], stdout: cap.stdout });
+    const out = cap.output();
+    expect(out).toContain("usage: jira-axi workitem link <KEY>");
+    expect(out).toContain("--reverse");
+    // Scoped to `link`: no other subcommand's flags.
+    expect(out).not.toContain("--jql");
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
   it("serves workitem help for bare `workitem`", async () => {
     const cap = capture();
     await main({ argv: ["workitem"], stdout: cap.stdout });
@@ -164,6 +175,32 @@ describe("resource/subcommand did-you-mean", () => {
     const cap = capture();
     await main({ argv: ["workitem", "vieww"], stdout: cap.stdout });
     expect(cap.output()).toContain("Did you mean `view`?");
+    expect(process.exitCode).toBe(2);
+  });
+});
+
+describe("workitem link exit codes", () => {
+  beforeEach(() => {
+    process.exitCode = undefined;
+    fakeAcli();
+  });
+  afterEach(() => setAcliRunner(null));
+
+  it.each([
+    [["workitem", "link", "TEAM-1", "--bogus", "x"], "Unknown flag: --bogus"],
+    [["workitem", "link", "TEAM-1"], "Missing required flags: --to, --type"],
+    [["workitem", "unlink", "TEAM-1"], "Missing --from <KEY> or --id <link id>"],
+    [["workitem", "list-links"], "Missing work item key"],
+    // The fake site has no link types at all, so any --type is unknown.
+    [
+      ["workitem", "link", "TEAM-1", "--to", "TEAM-2", "--type", "Nope"],
+      "Unknown link type",
+    ],
+  ])("exits 2 for %j", async (argv, message) => {
+    const cap = capture();
+    await main({ argv, stdout: cap.stdout });
+    expect(cap.output()).toContain(message);
+    expect(cap.output()).toContain("code: VALIDATION_ERROR");
     expect(process.exitCode).toBe(2);
   });
 });

@@ -5,9 +5,12 @@ import { makeAcliFake, type AcliCall } from "../../helpers/acliFake.js";
 import {
   FROZEN_NOW,
   commentListPayload,
+  LINK_TYPE_OBJECTS,
   createPayload,
+  linkedIssue,
   searchPayload,
   viewCreatedPayload,
+  viewLinkedPayload,
   viewParentedPayload,
   viewPayload,
   viewPayloadDone,
@@ -248,6 +251,7 @@ describe("workitem view", () => {
         status: in progress
         assignee: Jane Doe
         parent: none
+        links: 0
         priority: High
         created: 13d ago
         updated: 1d ago
@@ -499,6 +503,143 @@ describe("workitem view", () => {
     ]);
     expect(out).toContain("parent: none");
     expect(out).not.toContain("note: acli did not return");
+  });
+
+  it("requests issuelinks with the default detail set, in the one view call", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewPayload },
+    ]);
+    setAcliRunner(runner);
+
+    await workitemCommand(["view", "TEAM-1"]);
+    expect(calls).toHaveLength(1);
+    const requested = calls[0].args[calls[0].args.indexOf("--fields") + 1];
+    expect(requested.split(",")).toContain("issuelinks");
+  });
+
+  it("summarizes links inline and points at --links for the rows", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1"]);
+    expect(out).toContain(
+      "links: 3 (blocks TEAM-2; is blocked by OPS-9; relates to OPS-3)",
+    );
+    expect(out).toContain("help[5]:");
+    expect(out).toContain(
+      "Run `jira-axi workitem view TEAM-1 --links` to list its links with status, summary and ids",
+    );
+    expect(calls).toHaveLength(1);
+  });
+
+  it("caps the inline link summary and says how many more there are", async () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({
+      id: String(500 + i),
+      outwardIssue: linkedIssue(`OPS-${i + 1}`, `Item ${i + 1}`, "To Do"),
+      type: LINK_TYPE_OBJECTS.Relates,
+    }));
+    const { runner } = makeAcliFake([
+      {
+        match: isView("TEAM-1"),
+        result: {
+          ...viewPayload,
+          fields: { ...viewPayload.fields, issuelinks: many },
+        },
+      },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1"]);
+    expect(out).toContain(
+      "links: 8 (relates to OPS-1; relates to OPS-2; relates to OPS-3; relates to OPS-4; relates to OPS-5; +3 more)",
+    );
+  });
+
+  it("lists the links with --links from the same payload (no second acli call)", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--links"]);
+    // The rows follow, so the detail row is the bare count, not a repeat.
+    expect(out).toContain("  links: 3\n");
+    expect(out).toContain(`count: 3
+links[3]{relation,key,type,status,summary,id}:
+  blocks,TEAM-2,Blocks,todo,Add audit log export,10042
+  is blocked by,OPS-9,Blocks,wip,Rotate signing keys,10043
+  relates to,OPS-3,Relates,done,"SSO outage, 12 July",10044`);
+    expect(out).toContain("help[4]:");
+    expect(out).not.toContain("--links` to list its links");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("states a definitive empty link list with --links", async () => {
+    const { runner } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--links"]);
+    expect(out).toContain("count: 0\nlinks: 0 work item links on TEAM-1");
+  });
+
+  it("lets --limit govern the --links rows", async () => {
+    const { runner } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--links", "--limit", "1"]);
+    expect(out).toContain("count: 3 (showing first 1 — raise with --limit 3)");
+    expect(out).toContain("links[1]{relation,key,type,status,summary,id}:");
+  });
+
+  it("renders --fields links as the summary, requesting issuelinks from acli", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--fields", "summary,links"]);
+    const requested = calls[0].args[calls[0].args.indexOf("--fields") + 1];
+    expect(requested).toBe("key,summary,issuelinks");
+    expect(out).toContain(
+      "links: 3 (blocks TEAM-2; is blocked by OPS-9; relates to OPS-3)",
+    );
+    // The alias is returned under `issuelinks`, so it is not an unreturned field.
+    expect(out).not.toContain("did not return");
+  });
+
+  it("adds issuelinks to a --fields request when --links is passed", async () => {
+    const { runner, calls } = makeAcliFake([
+      { match: isView("TEAM-1"), result: viewLinkedPayload },
+    ]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["view", "TEAM-1", "--fields", "summary", "--links"]);
+    const requested = calls[0].args[calls[0].args.indexOf("--fields") + 1];
+    expect(requested).toBe("key,summary,issuelinks");
+    expect(out).toContain("links[3]{relation,key,type,status,summary,id}:");
+  });
+
+  it("renders links: unknown (never 0) when acli did not return the field", async () => {
+    const withoutLinks: Record<string, unknown> = { ...viewPayload.fields };
+    delete withoutLinks.issuelinks;
+    const { runner } = makeAcliFake([
+      {
+        match: isView("TEAM-1"),
+        result: { ...viewPayload, fields: withoutLinks },
+      },
+    ]);
+    setAcliRunner(runner);
+
+    expect(await workitemCommand(["view", "TEAM-1"])).toContain("links: unknown");
+    expect(await workitemCommand(["view", "TEAM-1", "--links"])).toContain(
+      "links: unknown (acli did not return `issuelinks` for TEAM-1)",
+    );
   });
 
   it("uppercases the key and requires one", async () => {
@@ -1194,5 +1335,47 @@ describe("workitem router", () => {
       code: "VALIDATION_ERROR",
       message: expect.stringContaining("Unknown workitem subcommand: vieww"),
     });
+  });
+
+  it("suggests the link subcommands for near-miss typos", async () => {
+    await expect(workitemCommand(["lnk"])).rejects.toMatchObject({
+      suggestions: expect.arrayContaining(["Did you mean `link`?"]),
+    });
+    await expect(workitemCommand(["link-type"])).rejects.toMatchObject({
+      suggestions: expect.arrayContaining(["Did you mean `link-types`?"]),
+    });
+  });
+
+  it("lists all twelve subcommands in the whole-resource help", async () => {
+    const help = await workitemCommand(["--help"]);
+    expect(help).toContain("subcommands[12]:");
+    expect(help).toContain(
+      'search "<JQL>", link <KEY> --to <KEY> --type <name|phrase>, unlink <KEY> --from <KEY> | --id <n>, list-links <KEY>, link-types',
+    );
+    for (const sub of ["link", "unlink", "list-links"]) {
+      expect(help).toContain(`flags{${sub}}:`);
+    }
+  });
+
+  it.each([
+    "list",
+    "view",
+    "create",
+    "edit",
+    "transition",
+    "assign",
+    "comment",
+    "search",
+  ])("serves subcommand-scoped help for `%s --help`", async (sub) => {
+    setAcliRunner(makeAcliFake([]).runner);
+    const help = await workitemCommand([sub, "--help"]);
+    expect(help).toContain(`usage: jira-axi workitem ${sub}`);
+    expect(help).toContain("examples[");
+    expect(help).toContain(`jira-axi workitem ${sub} `);
+    // Scoped: the link subcommands' flags are not dumped alongside.
+    expect(help).not.toContain("--reverse");
+    expect(help).toContain(
+      "Run `jira-axi workitem --help` for all 12 workitem subcommands",
+    );
   });
 });
