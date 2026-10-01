@@ -350,6 +350,11 @@ function linkResultSchema(subject: string, message: string): FieldDef[] {
  * Shared by `list-links` and `view --links`. Jira returns ALL of an item's
  * links in the one field, so `links.length` is the true total and the slice
  * is client-side (`displayLimit`).
+ *
+ * The `reads:` line is the legend for the rows - which way round a row reads
+ * is the one thing an agent must not guess. It is part of the content (so
+ * `view --links` carries it too), not a `help[]` line: those stay runnable
+ * commands.
  */
 export function renderLinkList(
   key: string,
@@ -364,6 +369,7 @@ export function renderLinkList(
   }
   return [
     formatCountLine({ count: links.length, displayLimit: limit }),
+    `reads: ${key} <relation> <key>`,
     renderList("links", links.slice(0, limit), linkListSchema),
   ];
 }

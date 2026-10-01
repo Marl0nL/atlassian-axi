@@ -62,7 +62,7 @@ jira-axi workitem view TEAM-1 --links
 ```
 
 The detail always carries a `links` row, read from this item's side: `0`, or the count plus an inline summary of up to five links, e.g. `links: 3 (blocks TEAM-2; is blocked by OPS-9; relates to OPS-3)`.
-With `--links` the row is the bare count and the rows follow.
+With `--links` the row is the bare count and the rows follow, under the same `reads:` legend as `list-links`.
 
 **Caveats:**
 - The default render omits created/updated/priority unless requested; the CLI requests the full detail set by default.
@@ -241,13 +241,14 @@ jira-axi workitem list-links TEAM-1
 
 ```
 count: 3
+reads: TEAM-1 <relation> <key>
 links[3]{relation,key,type,status,summary,id}:
   blocks,TEAM-2,Blocks,todo,Add audit log export,10042
   is blocked by,OPS-9,Blocks,wip,Rotate signing keys,10043
   relates to,OPS-3,Relates,done,"SSO outage, 12 July",10044
 ```
 
-Each row reads `<KEY> <relation> <key>`: `relation` is the link type's own phrase from the listed item's side, so `TEAM-1 blocks TEAM-2` and `TEAM-1 is blocked by OPS-9`.
+The `reads:` line is the legend for the rows: each one reads `<KEY> <relation> <key>`, where `relation` is the link type's own phrase from the listed item's side, so `TEAM-1 blocks TEAM-2` and `TEAM-1 is blocked by OPS-9`.
 `status` and `summary` are the OTHER item's; `id` is what `unlink --id` takes.
 
 **Caveats:**

@@ -569,7 +569,10 @@ describe("workitem view", () => {
     const out = await workitemCommand(["view", "TEAM-1", "--links"]);
     // The rows follow, so the detail row is the bare count, not a repeat.
     expect(out).toContain("  links: 3\n");
+    // The legend rides with the rows, so `view --links` states the direction
+    // rule exactly as `list-links` does.
     expect(out).toContain(`count: 3
+reads: TEAM-1 <relation> <key>
 links[3]{relation,key,type,status,summary,id}:
   blocks,TEAM-2,Blocks,todo,Add audit log export,10042
   is blocked by,OPS-9,Blocks,wip,Rotate signing keys,10043

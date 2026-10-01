@@ -140,7 +140,6 @@ const table: SuggestionEntry[] = [
     match: (c) =>
       c.domain === "workitem" && c.action === "list-links" && !c.isEmpty,
     lines: (c) => [
-      `Each row reads "${c.id} <relation> <key>"`,
       `Run \`jira-axi workitem unlink ${c.id} --id <id>\` to remove a link`,
       `Run \`jira-axi workitem link ${c.id} --to <KEY> --type <name|phrase>\` to add one`,
     ],
@@ -162,7 +161,7 @@ const table: SuggestionEntry[] = [
       c.domain === "workitem" && c.action === "link-types" && !c.isEmpty,
     lines: () => [
       'Run `jira-axi workitem link <KEY> --to <OTHER> --type <name>` to link "<KEY> <outward> <OTHER>"',
-      'Pass the inward phrase as --type (or add --reverse) to link "<KEY> <inward> <OTHER>"',
+      'Run `jira-axi workitem link <KEY> --to <OTHER> --type "<inward phrase>"` to link "<KEY> <inward> <OTHER>" (or `--type <name> --reverse`)',
     ],
   },
   {

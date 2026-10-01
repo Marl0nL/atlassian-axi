@@ -54,12 +54,12 @@ describe("workitem list-links", () => {
     const out = await workitemCommand(["list-links", "TEAM-1"]);
     expect(out).toMatchInlineSnapshot(`
       "count: 3
+      reads: TEAM-1 <relation> <key>
       links[3]{relation,key,type,status,summary,id}:
         blocks,TEAM-2,Blocks,todo,Add audit log export,10042
         is blocked by,OPS-9,Blocks,wip,Rotate signing keys,10043
         relates to,OPS-3,Relates,done,"SSO outage, 12 July",10044
-      help[3]:
-        Each row reads "TEAM-1 <relation> <key>"
+      help[2]:
         Run \`jira-axi workitem unlink TEAM-1 --id <id>\` to remove a link
         Run \`jira-axi workitem link TEAM-1 --to <KEY> --type <name|phrase>\` to add one"
     `);
@@ -174,7 +174,7 @@ describe("workitem link-types", () => {
         Relates,relates to,relates to
       help[2]:
         Run \`jira-axi workitem link <KEY> --to <OTHER> --type <name>\` to link "<KEY> <outward> <OTHER>"
-        Pass the inward phrase as --type (or add --reverse) to link "<KEY> <inward> <OTHER>""
+        Run \`jira-axi workitem link <KEY> --to <OTHER> --type "<inward phrase>"\` to link "<KEY> <inward> <OTHER>" (or \`--type <name> --reverse\`)"
     `);
     // acli's `link type` has names only; the phrases come from one work item
     // per type, found with a bounded JQL.
@@ -833,6 +833,36 @@ describe("workitem unlink", () => {
 // ---------------------------------------------------------------------------
 // help
 // ---------------------------------------------------------------------------
+
+describe("workitem link suggestions", () => {
+  /** The lines of the trailing `help[n]:` block. */
+  const helpLines = (out: string) =>
+    out
+      .slice(out.lastIndexOf("help["))
+      .split("\n")
+      .slice(1)
+      .map((line) => line.trim());
+
+  // AXI: a `help[]` line is a next step the agent can run as printed (or a
+  // template with <placeholders>) - never a legend or a tip. Explanations
+  // belong in the content (`reads:`, `note:`) or in `--help`.
+  it.each([
+    ["list-links", ["list-links", "TEAM-1"]],
+    ["list-links (empty)", ["list-links", "TEAM-2"]],
+    ["link-types", ["link-types"]],
+    ["link", ["link", "TEAM-1", "--to", "TEAM-2", "--type", "Blocks"]],
+    ["link (no-op)", ["link", "TEAM-1", "--to", "OPS-9", "--type", "Relates"]],
+    ["unlink", ["unlink", "TEAM-1", "--from", "OPS-9"]],
+    ["unlink (no-op)", ["unlink", "TEAM-1", "--from", "TEAM-2"]],
+  ])("every help line after `%s` is a runnable command", async (_name, args) => {
+    const { out } = await run(args, makeLinkSite({ links: [RELATES] }));
+    const lines = helpLines(out);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line).toMatch(/^Run `jira-axi workitem [a-z-]+( [^`]+)?` /);
+    }
+  });
+});
 
 describe("workitem link help", () => {
   it.each(["link", "unlink", "list-links", "link-types"])(
