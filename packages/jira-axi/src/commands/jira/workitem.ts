@@ -38,6 +38,7 @@ import {
   WORKITEM_HELP,
   WORKITEM_SUBCOMMANDS,
   workitemHelp,
+  workitemHelpRequest,
 } from "./workitem-help.js";
 import {
   linkWorkitem,
@@ -57,9 +58,16 @@ export async function workitemCommand(
 ): Promise<string> {
   const sub = args[0];
 
-  if (!sub || sub === "--help") {
+  if (!sub || sub === "--help" || sub === "-h") {
     return WORKITEM_HELP;
   }
+
+  // Help gate, before ANY handler: `--help`/`-h` anywhere after the subcommand
+  // prints that subcommand's help and does nothing else. Without it a body or
+  // value flag would swallow the token (`comment TEAM-1 --body --help`) and a
+  // mutating subcommand would write the text "--help" to a real ticket.
+  const help = workitemHelpRequest(args);
+  if (help !== undefined) return help;
 
   switch (sub) {
     case "list":

@@ -205,6 +205,52 @@ describe("workitem link exit codes", () => {
   });
 });
 
+describe("workitem help gate through the CLI", () => {
+  const savedExitCode = process.exitCode;
+  let calls: string[][];
+
+  beforeEach(() => {
+    process.exitCode = undefined;
+    calls = [];
+    setAcliRunner(async (args) => {
+      calls.push(args);
+      return { stdout: "{}", stderr: "", exitCode: 0 };
+    });
+  });
+  afterEach(() => {
+    process.exitCode = savedExitCode;
+    setAcliRunner(null);
+  });
+
+  // The footgun this guards: nothing upstream of workitem intercepts --help
+  // any more, so a body flag used to swallow it and post it as the comment.
+  it.each([
+    [["workitem", "comment", "TEAM-1", "--body", "--help"], "comment"],
+    [["workitem", "comment", "TEAM-1", "--body", "-h"], "comment"],
+    [["workitem", "edit", "TEAM-1", "--summary", "--help"], "edit"],
+    [["workitem", "transition", "TEAM-1", "--to", "Done", "--help"], "transition"],
+    [["workitem", "link", "TEAM-1", "--to", "TEAM-2", "--type", "-h"], "link"],
+    [["workitem", "unlink", "TEAM-1", "--id", "--help"], "unlink"],
+  ])("prints help, exits 0 and never calls acli for %j", async (argv, sub) => {
+    const cap = capture();
+    await main({ argv, stdout: cap.stdout });
+    expect(cap.output()).toContain(`usage: jira-axi workitem ${sub}`);
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("exits 2 and never calls acli for --body=--help", async () => {
+    const cap = capture();
+    await main({
+      argv: ["workitem", "comment", "TEAM-1", "--body=--help"],
+      stdout: cap.stdout,
+    });
+    expect(cap.output()).toContain("is never sent to Jira");
+    expect(process.exitCode).toBe(2);
+    expect(calls).toHaveLength(0);
+  });
+});
+
 describe("help table covers every resource", () => {
   beforeEach(fakeAcli);
   afterEach(() => setAcliRunner(null));

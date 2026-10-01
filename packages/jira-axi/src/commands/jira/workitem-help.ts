@@ -1,3 +1,5 @@
+import { AxiError } from "@atlassian-axi/core";
+
 /**
  * Per-subcommand help content for `workitem`. Single source of truth for both
  * the whole-resource `workitem --help` doc and the subcommand-scoped
@@ -198,4 +200,60 @@ export function workitemHelp(sub: WorkitemSubcommand): string {
     "help[1]:",
     `  Run \`jira-axi workitem --help\` for all ${WORKITEM_SUBCOMMANDS.length} workitem subcommands`,
   ].join("\n");
+}
+
+const HELP_TOKENS: readonly string[] = ["--help", "-h"];
+
+function isWorkitemSubcommand(sub: string): sub is WorkitemSubcommand {
+  return Object.prototype.hasOwnProperty.call(WORKITEM_SUBCOMMAND_DOCS, sub);
+}
+
+/**
+ * The help gate every `workitem <sub>` invocation passes BEFORE its handler
+ * runs: a `--help`/`-h` token ANYWHERE after the subcommand returns that
+ * subcommand's help and nothing else happens - no read, no write.
+ *
+ * This is deliberately position-blind. Because `workitem` owns its own help
+ * (it is not in the SDK's COMMAND_HELP), nothing upstream intercepts
+ * `comment TEAM-1 --body --help`; left to the handler, the body flag would
+ * consume `--help` as its VALUE and post that text to a real ticket. A token
+ * that is exactly `--help` or `-h` is therefore never a value: it is always a
+ * help request, on reads and mutations alike.
+ *
+ * The `--flag=--help` spelling is the one case where the caller plainly meant
+ * a value, so it is not served as help - but it must not reach Jira either:
+ * it is refused (exit 2) with the way to send such text on purpose.
+ *
+ * Returns the help text to print, or `undefined` to carry on. An unknown
+ * subcommand is left to the dispatcher's did-you-mean error.
+ */
+export function workitemHelpRequest(
+  args: readonly string[],
+): string | undefined {
+  const sub = args[0];
+  if (sub === undefined || !isWorkitemSubcommand(sub)) return undefined;
+  const rest = args.slice(1);
+  if (rest.some((arg) => HELP_TOKENS.includes(arg))) return workitemHelp(sub);
+
+  const smuggled = rest.find((arg) => {
+    const equals = arg.indexOf("=");
+    return (
+      arg.startsWith("--") &&
+      equals !== -1 &&
+      HELP_TOKENS.includes(arg.slice(equals + 1))
+    );
+  });
+  if (smuggled !== undefined) {
+    const flag = smuggled.slice(0, smuggled.indexOf("="));
+    const value = smuggled.slice(smuggled.indexOf("=") + 1);
+    throw new AxiError(
+      `Refusing ${flag}=${value}: a value of exactly ${value} is never sent to Jira (it reads as a help request)`,
+      "VALIDATION_ERROR",
+      [
+        `Run \`jira-axi workitem ${sub} --help\` for this subcommand's help`,
+        "To store that literal text, put it in a file and pass --body-file <path> (where the subcommand takes a body)",
+      ],
+    );
+  }
+  return undefined;
 }

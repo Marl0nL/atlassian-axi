@@ -17,6 +17,8 @@ Work items are key-addressed (e.g. `TEAM-42`).
 Mutations (`create`, `edit`, `transition`, `assign`, `comment`, `link`, `unlink`) run non-interactively with acli `--yes`, then re-fetch and render the authoritative post-state.
 
 `jira-axi workitem --help` lists every subcommand; `jira-axi workitem <subcommand> --help` prints only that subcommand's flags and examples.
+`--help` or `-h` ANYWHERE after a workitem subcommand prints that help and does nothing else - no read, no write - even in a flag's value position (`comment TEAM-1 --body --help` prints help; it does not post "--help").
+The `--flag=--help` spelling is refused with `VALIDATION_ERROR` (exit 2). To store that literal text, pass it through `--body-file`.
 
 Body inputs (`--body`/`--body-file` on `create`, `edit`, `comment`) accept a markdown SUBSET and are converted to real Jira ADF: headings, ordered + unordered + nested lists, inline code, fenced code blocks, bold, italic, links.
 Raw ADF JSON is passed through unchanged.

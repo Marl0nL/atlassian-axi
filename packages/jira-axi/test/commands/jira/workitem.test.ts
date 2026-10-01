@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setAcliRunner } from "../../../src/acli.js";
 import { workitemCommand } from "../../../src/commands/jira/workitem.js";
@@ -1249,7 +1252,16 @@ describe("workitem comment", () => {
     expect(out).toContain("--comments");
   });
 
-  it("treats a body value of --help as text, not a help request", async () => {
+  it("never posts a body that is exactly --help: it is a help request", async () => {
+    const { runner, calls } = makeAcliFake([]);
+    setAcliRunner(runner);
+
+    const out = await workitemCommand(["comment", "TEAM-1", "--body", "--help"]);
+    expect(out).toContain("usage: jira-axi workitem comment <KEY>");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("still posts a body that merely mentions --help", async () => {
     const { runner, calls } = makeAcliFake([
       {
         match: (args) => args[2] === "comment" && args[3] === "create",
@@ -1259,19 +1271,151 @@ describe("workitem comment", () => {
     ]);
     setAcliRunner(runner);
 
-    const out = await workitemCommand(["comment", "TEAM-1", "--body", "--help"]);
-    const create = calls.find(
-      (c) => c.args[2] === "comment" && c.args[3] === "create",
-    );
-    expect(create).toBeDefined();
+    const out = await workitemCommand([
+      "comment",
+      "TEAM-1",
+      "--body",
+      "see the --help output",
+    ]);
+    expect(
+      calls.find((c) => c.args[2] === "comment" && c.args[3] === "create"),
+    ).toBeDefined();
     expect(out).toContain("message: Comment added");
-    expect(out).not.toContain("usage:");
+  });
+
+  it("posts the literal text --help when it comes from --body-file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "jira-axi-help-"));
+    const file = join(dir, "body.md");
+    writeFileSync(file, "--help");
+    const { runner, calls } = makeAcliFake([
+      {
+        match: (args) => args[2] === "comment" && args[3] === "create",
+        result: {},
+      },
+      { match: isView("TEAM-1"), result: viewPayload },
+    ]);
+    setAcliRunner(runner);
+    try {
+      const out = await workitemCommand(["comment", "TEAM-1", "--body-file", file]);
+      expect(out).toContain("message: Comment added");
+      const create = calls.find(
+        (c) => c.args[2] === "comment" && c.args[3] === "create",
+      );
+      expect(JSON.stringify(create?.bodyFile)).toContain("--help");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("returns help for `comment --help` instead of a missing-body error", async () => {
     setAcliRunner(makeAcliFake([]).runner);
     const out = await workitemCommand(["comment", "--help"]);
     expect(out).toContain("usage: jira-axi workitem");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// help gate: --help / -h never reaches Jira
+// ---------------------------------------------------------------------------
+
+describe("workitem help gate", () => {
+  // Every mutating subcommand, with the help token in a flag's VALUE position
+  // (where the flag would otherwise swallow it and write it to the ticket) and
+  // trailing a complete, otherwise-valid invocation. `H` is the token.
+  const H = "<help>";
+  const MUTATIONS: Array<[sub: string, args: string[]]> = [
+    ["create", ["create", "--project", "TEAM", "--type", "Task", "--summary", H]],
+    [
+      "create",
+      ["create", "--project", "TEAM", "--type", "Task", "--summary", "S", "--body", H],
+    ],
+    ["create", ["create", "--project", "TEAM", "--type", "Task", "--summary", "S", H]],
+    ["create", ["create", H, "--project", "TEAM", "--type", "Task", "--summary", "S"]],
+    ["edit", ["edit", "TEAM-1", "--summary", H]],
+    ["edit", ["edit", "TEAM-1", "--body", H]],
+    ["edit", ["edit", "TEAM-1", "--labels", H]],
+    ["edit", ["edit", "TEAM-1", "--summary", "New title", H]],
+    ["transition", ["transition", "TEAM-1", "--to", H]],
+    ["transition", ["transition", "TEAM-1", "--to", "Done", H]],
+    ["assign", ["assign", "TEAM-1", "--assignee", H]],
+    ["assign", ["assign", "TEAM-1", "--assignee", "@me", H]],
+    ["comment", ["comment", "TEAM-1", "--body", H]],
+    ["comment", ["comment", "TEAM-1", "--body", "Deployed", H]],
+    ["comment", ["comment", H, "TEAM-1", "--body", "Deployed"]],
+    ["link", ["link", "TEAM-1", "--to", "TEAM-2", "--type", H]],
+    ["link", ["link", "TEAM-1", "--to", H, "--type", "Blocks"]],
+    ["link", ["link", "TEAM-1", "--to", "TEAM-2", "--type", "Blocks", H]],
+    ["unlink", ["unlink", "TEAM-1", "--from", "TEAM-2", "--type", H]],
+    ["unlink", ["unlink", "TEAM-1", "--id", H]],
+    ["unlink", ["unlink", "TEAM-1", "--from", "TEAM-2", H]],
+  ];
+  const cases = ["--help", "-h"].flatMap((token) =>
+    MUTATIONS.map(
+      ([sub, args]) =>
+        [sub, args.map((arg) => (arg === H ? token : arg))] as const,
+    ),
+  );
+
+  it.each(cases)(
+    "%s: prints its help and makes no acli call for %j",
+    async (sub, args) => {
+      // No routes: ANY acli invocation (read or write) throws, and is recorded.
+      const { runner, calls } = makeAcliFake([]);
+      setAcliRunner(runner);
+
+      const out = await workitemCommand([...args]);
+      expect(out).toContain(`usage: jira-axi workitem ${sub}`);
+      expect(out).toContain("examples[");
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  // `--flag=--help` plainly means a VALUE, so it is not served as help - but
+  // it is refused (exit 2) rather than written to the ticket.
+  it.each([
+    ["create", ["create", "--project", "TEAM", "--type", "Task", "--summary=--help"]],
+    ["edit", ["edit", "TEAM-1", "--summary=-h"]],
+    ["edit", ["edit", "TEAM-1", "--body=--help"]],
+    ["transition", ["transition", "TEAM-1", "--to=--help"]],
+    ["assign", ["assign", "TEAM-1", "--assignee=-h"]],
+    ["comment", ["comment", "TEAM-1", "--body=--help"]],
+    ["comment", ["comment", "TEAM-1", "--body=-h"]],
+    ["link", ["link", "TEAM-1", "--to", "TEAM-2", "--type=--help"]],
+    ["unlink", ["unlink", "TEAM-1", "--from", "TEAM-2", "--type=-h"]],
+  ])("%s: refuses %j with exit 2 and makes no acli call", async (sub, args) => {
+    const { runner, calls } = makeAcliFake([]);
+    setAcliRunner(runner);
+
+    await expect(workitemCommand([...args])).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("is never sent to Jira"),
+      suggestions: expect.arrayContaining([
+        `Run \`jira-axi workitem ${sub} --help\` for this subcommand's help`,
+      ]),
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each(["list", "view", "search", "list-links", "link-types"])(
+    "applies to the read subcommand %s too",
+    async (sub) => {
+      const { runner, calls } = makeAcliFake([]);
+      setAcliRunner(runner);
+      const out = await workitemCommand([sub, "TEAM-1", "-h"]);
+      expect(out).toContain(`usage: jira-axi workitem ${sub}`);
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it("serves the whole-resource help for a bare -h", async () => {
+    expect(await workitemCommand(["-h"])).toContain("subcommands[12]:");
+  });
+
+  it("leaves an unknown subcommand to the did-you-mean error", async () => {
+    await expect(workitemCommand(["vieww", "--help"])).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("Unknown workitem subcommand: vieww"),
+    });
   });
 });
 
