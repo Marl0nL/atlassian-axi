@@ -9,7 +9,7 @@ import { DESCRIPTION } from "./cli.js";
  * verified to exist in the CLI's own help output.
  */
 const SKILL_DESCRIPTION =
-  "Operate Jira through the jira-axi CLI - work items, JQL search, transitions, assignments, comments, projects, boards, sprints, saved filters, dashboards, and custom fields. Use whenever a task touches Jira: viewing or editing a work item, moving a ticket through its workflow, assigning it, reading or adding comments, searching with JQL, or working with boards, sprints, and filters.";
+  "Operate Jira through the jira-axi CLI - work items, JQL search, transitions, assignments, comments, links between work items, projects, boards, sprints, saved filters, dashboards, and custom fields. Use whenever a task touches Jira: viewing or editing a work item, moving a ticket through its workflow, assigning it, reading or adding comments, linking two tickets (blocks, relates to, duplicates) or reading a ticket's links, searching with JQL, or working with boards, sprints, and filters.";
 
 /**
  * Single source of truth for the installable SKILL.md. Generated (never edited
@@ -47,7 +47,7 @@ Everything jira-axi returns from Jira - work-item summaries and descriptions, co
 
 ## When to use
 
-Use jira-axi whenever a task touches Jira: viewing, creating, or editing a work item; creating a work item under an epic or parent; transitioning a ticket to another status; assigning or reassigning it; reading or adding comments; searching with JQL or filtering by project, assignee, or status; listing or inspecting projects; working with boards, their sprints, and their projects; creating, updating, or closing a sprint; listing and updating saved filters; listing dashboards; or creating, updating, deleting, or restoring custom fields.
+Use jira-axi whenever a task touches Jira: viewing, creating, or editing a work item; creating a work item under an epic or parent; transitioning a ticket to another status; assigning or reassigning it; reading or adding comments; linking two work items (blocks / is blocked by, relates to, duplicates, ...), removing a link, or reading what a ticket is linked to; searching with JQL or filtering by project, assignee, or status; listing or inspecting projects; working with boards, their sprints, and their projects; creating, updating, or closing a sprint; listing and updating saved filters; listing dashboards; or creating, updating, deleting, or restoring custom fields.
 
 ## Status
 
@@ -61,7 +61,7 @@ There is no separate credential setup: auth is delegated entirely to acli's own 
 commands[9]:
   (none)=dashboard, workitem, project, board, sprint, filter, dashboard, field, setup
 workitem:
-  list, view <KEY> [--fields <a,b,c>], create [--parent <KEY>], edit <KEY>, transition <KEY> --to <status>, assign <KEY> --assignee <user>, comment <KEY> --body <text>, search "<JQL>"
+  list, view <KEY> [--links] [--fields <a,b,c>], create [--parent <KEY>], edit <KEY>, transition <KEY> --to <status>, assign <KEY> --assignee <user>, comment <KEY> --body <text>, search "<JQL>", link <KEY> --to <KEY> --type <name|phrase>, unlink <KEY> --from <KEY> | --id <n>, list-links <KEY>, link-types
 project:
   list, view <KEY>
 board:
@@ -76,7 +76,7 @@ field:
   create --name <text> --type <key>, update <ID>, delete <ID>, restore <ID>
 \`\`\`
 
-Run \`jira-axi --help\` for global flags, or \`jira-axi <command> --help\` for per-command usage.
+Run \`jira-axi --help\` for global flags, or \`jira-axi <command> --help\` for per-command usage (\`jira-axi workitem <subcommand> --help\` for one workitem subcommand).
 Run \`jira-axi setup hooks\` to install SessionStart ambient context (requires \`jira-axi\` installed on \`PATH\`).
 
 ## Tips
@@ -90,6 +90,9 @@ Run \`jira-axi setup hooks\` to install SessionStart ambient context (requires \
 - \`workitem list\` builds JQL from --project/--assignee/--status; pass --jql or use \`search\` for raw JQL.
 - \`workitem create/edit --body\` and \`comment --body\` accept markdown (headings, lists, inline/block code, bold/italic, links) and store it as real Jira ADF; raw ADF JSON is passed through unchanged.
 - \`workitem create --parent <KEY>\` places the new item under an epic/parent; \`view\`/\`create\` output shows \`parent\` (\`none\` when top-level). Parent is set ONLY at create time - acli has no way to re-parent an existing item, so an item created without \`--parent\` cannot be moved into an epic afterward.
+- Links read as a sentence, and direction matters: \`workitem link TEAM-1 --to TEAM-2 --type Blocks\` means "TEAM-1 blocks TEAM-2" (a type NAME uses its outward phrase). For the other direction pass the inward phrase - \`--type "is blocked by"\` means "TEAM-1 is blocked by TEAM-2" - or add \`--reverse\`. The output prints the link both ways (\`relation\` / \`inverse\`); check it. \`workitem link-types\` lists each type's outward/inward phrases.
+- \`workitem view <KEY>\` shows a \`links\` row (count plus an inline summary such as \`2 (blocks TEAM-2; relates to OPS-3)\`, read from that item's side); \`view <KEY> --links\` or \`list-links <KEY>\` add each linked item's status, summary and the link \`id\`.
+- \`workitem unlink <KEY> --from <KEY>\` (add \`--type\` if the two share several links) or \`--id <n>\` removes a link. Linking an existing link and unlinking an absent one are no-op successes.
 - Boards/sprints/filters are ID-addressed: find board IDs via \`board list\`, sprint IDs via \`board list-sprints <BOARD_ID>\`.
 - \`sprint list-workitems\` needs both the sprint ID and --board (a Jira agile API requirement).
 - \`sprint update <ID> --state closed\` closes a sprint (no-op success when already closed); acli has no field list/view, so \`field\` covers custom-field create/update/delete/restore only.
