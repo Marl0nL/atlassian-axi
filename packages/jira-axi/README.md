@@ -81,7 +81,7 @@ Flags MUST come after the command: `jira-axi workitem list --project TEAM`, neve
 All commands are flattened and per-bin (no `jira` prefix).
 Resources are addressed two ways: `workitem`/`project` are KEY-addressed (`TEAM-1`, `TEAM`); `board`/`sprint`/`filter`/`dashboard`/`field` are ID-addressed (numeric).
 
-- `workitem` - `list`, `view <KEY>`, `create`, `edit <KEY>`, `transition <KEY>`, `assign <KEY>`, `comment <KEY>`, `search "<JQL>"`
+- `workitem` - `list`, `view <KEY>`, `create`, `edit <KEY>`, `transition <KEY>`, `assign <KEY>`, `comment <KEY>`, `search "<JQL>"`, `link <KEY>`, `unlink <KEY>`, `list-links <KEY>`, `link-types`
 - `project` - `list`, `view <KEY>`
 - `board` - `list`, `view <ID>`, `list-sprints <ID>`, `list-projects <ID>`
 - `sprint` - `view <ID>`, `list-workitems <ID> --board <ID>`, `create`, `update <ID>`
@@ -91,7 +91,10 @@ Resources are addressed two ways: `workitem`/`project` are KEY-addressed (`TEAM-
 - `setup hooks` - install agent SessionStart ambient-context hooks
 - `update` / `update --check` - self-upgrade the CLI (inherited built-in)
 
-Per-command help is always available: `jira-axi <resource> --help` (e.g. `jira-axi workitem --help`).
+Per-command help is always available: `jira-axi <resource> --help` (e.g. `jira-axi workitem --help`); `jira-axi workitem <subcommand> --help` prints one subcommand's flags and examples.
+
+Links read as a sentence: `jira-axi workitem link TEAM-1 --to TEAM-2 --type Blocks` means "TEAM-1 blocks TEAM-2", and `--type "is blocked by"` (or `--reverse`) the other way.
+`workitem view` shows a work item's links inline.
 
 ## Output and behavior
 
