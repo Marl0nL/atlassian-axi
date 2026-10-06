@@ -22,7 +22,7 @@ Install and invocation guidance lives in [Getting started](./getting-started.md#
 
 - Flags come AFTER the command: `jira-axi workitem list --project TEAM`, never before.
 - Auth is delegated to `acli`. `jira-axi` has no auth command; run `acli jira auth login` once (install acli via `brew install acli`).
-- Work item and comment bodies accept a markdown subset (converted to ADF); raw ADF JSON passes through unchanged.
+- Work item and comment bodies accept a markdown subset (converted to ADF); raw ADF JSON passes through unchanged. A comment can @-mention a person with `@[email]`, `@[Full Name]` or `@[accountId:<id>]` plus `--mention` (see [commands](./commands.md)).
 - Long free text truncates by default with a size marker; the detail command that renders it takes `--full` (see [commands](./commands.md)).
 - All structured output is TOON-encoded. There is no plain-text or JSON mode.
 - Mutations are non-interactive (`acli --yes`), idempotent, and re-fetch the post-state; re-running a failed mutation is safe.

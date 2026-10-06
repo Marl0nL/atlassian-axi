@@ -1,5 +1,5 @@
 import { acliJson } from "../../acli.js";
-import { writeAdfTempFile } from "../../adf.js";
+import { bodyToAdf, writeAdfDocTempFile, writeAdfTempFile } from "../../adf.js";
 import { BODY_FLAGS, takeBody } from "@atlassian-axi/core";
 import type { SiteContext } from "@atlassian-axi/core";
 import { AxiError } from "@atlassian-axi/core";
@@ -7,6 +7,7 @@ import { unknownSubcommandError } from "@atlassian-axi/core";
 import { formatCountLine } from "@atlassian-axi/core";
 import { getSuggestions } from "../../suggestions.js";
 import {
+  custom,
   field,
   renderDetail,
   renderHelp,
@@ -34,6 +35,20 @@ import {
   workitemViewSchema,
   type JsonRecord,
 } from "./shared.js";
+import {
+  MAX_MENTIONS,
+  bareMentionNote,
+  commentsOf,
+  describePerson,
+  distinctPeople,
+  mentionRequests,
+  peopleOnTicket,
+  resolveMentions,
+  storedMentions,
+  type PeopleSearch,
+  type Person,
+  type StoredMention,
+} from "./mentions.js";
 import {
   WORKITEM_HELP,
   WORKITEM_SUBCOMMANDS,
@@ -121,7 +136,7 @@ const VIEW_FIELDS = `key,summary,status,assignee,description,created,updated,pri
  * Fetch one work item by key (acli view --json; tolerate array envelopes).
  * A user --fields list replaces the default detail set (`key` always rides
  * along so the render can anchor on it); `extra` names fields a flag needs on
- * top of that list (e.g. `--links` with `--fields summary`).
+ * top of either set (e.g. `--links` with `--fields summary`, or `comment`).
  */
 async function fetchWorkitem(
   key: string,
@@ -138,7 +153,7 @@ async function fetchWorkitem(
           ...extra,
         ]),
       ].join(",")
-    : VIEW_FIELDS;
+    : [VIEW_FIELDS, ...extra].join(",");
   const payload = await acliJson<unknown>([
     "jira",
     "workitem",
@@ -356,7 +371,13 @@ async function viewWorkitem(
     );
   }
 
-  const item = await fetchWorkitem(key, fields, withLinks ? [LINKS_FIELD] : []);
+  // `comment` rides along with --comments: the embedded field is the STORED
+  // ADF (mentions, lists and marks intact), where acli's `comment list`
+  // flattens it lossily and drops every mention.
+  const item = await fetchWorkitem(key, fields, [
+    ...(withLinks ? [LINKS_FIELD] : []),
+    ...(withComments ? ["comment"] : []),
+  ]);
   const links = linksOf(item);
   const blocks: string[] = [
     renderDetail(
@@ -414,23 +435,7 @@ async function viewWorkitem(
   }
 
   if (withComments) {
-    // acli's comment list defaults to a 50-row page and its envelope carries
-    // the true `total`; without an explicit --limit and a count line the
-    // truncation was silent (an issue with 200 comments rendered 50 rows with
-    // no signal that 150 more existed).
-    const payload = await acliJson<unknown>([
-      "jira",
-      "workitem",
-      "comment",
-      "list",
-      "--key",
-      key,
-      "--limit",
-      String(listLimit),
-      "--json",
-    ]);
-    const comments = itemsOf(payload, "comments", "values");
-    const total = totalOf(payload);
+    const { comments, total } = await readComments(key, item, listLimit);
     blocks.push(
       formatCountLine({
         count: comments.length,
@@ -462,6 +467,48 @@ async function viewWorkitem(
     ),
   );
   return renderOutput(blocks);
+}
+
+/**
+ * The first `limit` comments of a work item, oldest first, plus the true total.
+ *
+ * Preferred source: the `comment` field already embedded in `item` (stored ADF,
+ * so mentions render as `@Name`). When acli did not return it, or returned
+ * fewer rows than were asked for, fall back to acli's server-paged
+ * `comment list` - complete, but flattened upstream (no mentions, no marks).
+ */
+async function readComments(
+  key: string,
+  item: JsonRecord,
+  limit: number,
+): Promise<{ comments: JsonRecord[]; total: number | undefined }> {
+  const embedded = fieldOf(item, "comment");
+  if (embedded && typeof embedded === "object") {
+    const all = commentsOf(item);
+    const total = totalOf(embedded) ?? all.length;
+    if (all.length >= Math.min(limit, total)) {
+      return { comments: all.slice(0, limit), total };
+    }
+  }
+  // acli's comment list defaults to a 50-row page and its envelope carries
+  // the true `total`; without an explicit --limit and a count line the
+  // truncation was silent (an issue with 200 comments rendered 50 rows with
+  // no signal that 150 more existed).
+  const payload = await acliJson<unknown>([
+    "jira",
+    "workitem",
+    "comment",
+    "list",
+    "--key",
+    key,
+    "--limit",
+    String(limit),
+    "--json",
+  ]);
+  return {
+    comments: itemsOf(payload, "comments", "values"),
+    total: totalOf(payload),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -860,13 +907,107 @@ function isAlreadyAssigned(item: JsonRecord, requested: string): boolean {
 // comment
 // ---------------------------------------------------------------------------
 
+/** Fields that name the people on a ticket (plus the comments already there). */
+const PEOPLE_FIELDS = ["assignee", "reporter", "comment", "description"];
+
+/** Longest inline body an error's retry command reprints verbatim. */
+const RETRY_BODY_MAX = 300;
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Build the retry instruction for a comment: the same command, optionally with
+ * one mention token swapped and/or `--mention` added. An inline one-line body
+ * is reprinted verbatim so the command runs as printed; a file or a long body
+ * cannot be, so the instruction names the edit instead.
+ */
+function commentRetry(
+  key: string,
+  args: readonly string[],
+  body: string,
+  withMention: boolean,
+): (replace?: { from: string; to: string }) => string {
+  const fileIndex = args.findIndex(
+    (arg) => arg === "--body-file" || arg.startsWith("--body-file="),
+  );
+  const file =
+    fileIndex === -1
+      ? undefined
+      : args[fileIndex].includes("=")
+        ? args[fileIndex].slice("--body-file=".length)
+        : args[fileIndex + 1];
+  const tail = withMention ? " --mention" : "";
+  return (replace) => {
+    if (file !== undefined) {
+      const command = `jira-axi workitem comment ${key} --body-file ${shellQuote(file)}${tail}`;
+      return replace
+        ? `Replace ${replace.from} with ${replace.to} in ${file}, then run \`${command}\``
+        : `Run \`${command}\``;
+    }
+    if (body.length > RETRY_BODY_MAX || /[\r\n`]/.test(body)) {
+      const command = `jira-axi workitem comment ${key} --body "<same body>"${tail}`;
+      return replace
+        ? `Replace ${replace.from} with ${replace.to} in the body, then run \`${command}\``
+        : `Run \`${command}\``;
+    }
+    // Match the token as typed: any case, any padding inside the brackets.
+    const next = replace
+      ? body.replace(
+          new RegExp(
+            `@\\[\\s*${replace.from.slice(2, -1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\]`,
+            "gi",
+          ),
+          () => replace.to,
+        )
+      : body;
+    return `Run \`jira-axi workitem comment ${key} --body ${shellQuote(next)}${tail}\``;
+  };
+}
+
+const searchPeople: PeopleSearch = (field, query, exclude, limit) =>
+  runSearch(
+    `${field} = ${quoteJql(query)}${
+      exclude.length > 0
+        ? ` AND ${field} not in (${exclude.map(quoteJql).join(", ")})`
+        : ""
+    } ORDER BY updated DESC`,
+    limit,
+    ["key", field],
+  );
+
+/** Watchers are one more place a name can resolve from; never worth failing on. */
+async function fetchWatchers(key: string): Promise<unknown> {
+  try {
+    return await acliJson<unknown>([
+      "jira",
+      "workitem",
+      "list-watchers",
+      "--key",
+      key,
+      "--json",
+    ]);
+  } catch {
+    return undefined;
+  }
+}
+
 async function commentWorkitem(
   args: string[],
   ctx?: SiteContext,
 ): Promise<string> {
+  const rawArgs = [...args];
   // Optional at first so `comment --help` reaches the help path; enforced below.
-  const body = takeBody(args, { label: "comment" });
-  const parsed = parseFlags(args, { consumed: BODY_FLAGS });
+  // valueBoundaryFlags keeps `--body --mention` from posting the text "--mention".
+  const body = takeBody(args, {
+    label: "comment",
+    valueBoundaryFlags: ["--mention"],
+  });
+  const parsed = parseFlags(args, {
+    bools: ["--mention"],
+    consumed: BODY_FLAGS,
+  });
   if (parsed.help) return workitemHelp("comment");
 
   if (body === undefined) {
@@ -875,10 +1016,67 @@ async function commentWorkitem(
     ]);
   }
   const key = requireKey(args, parsed.positional, "comment");
+  const confirmed = parsed.bools["--mention"];
 
   // Comment bodies are ADF too: convert the markdown and pass it through acli's
   // ADF --body-file path (a bare --body string stores one flat text node).
-  const comment = writeAdfTempFile(body);
+  // `@[...]` becomes an unresolved mention node, resolved (or refused) below
+  // BEFORE anything is written.
+  const doc = bodyToAdf(body, { mentions: true });
+  const requests = mentionRequests(doc);
+  let expected: Person[] = [];
+  let existingIds = new Set<string>();
+  // Jira embeds only the FIRST page of the `comment` field (100, oldest first;
+  // seen live on a 1641-comment item), so on a long thread the comment posted
+  // below can never be re-read through it - and acli has no other ADF read.
+  let embeddedIsPaged = false;
+
+  if (requests.length > 0) {
+    if (requests.length > MAX_MENTIONS) {
+      throw new AxiError(
+        `Too many mentions: this comment has ${requests.length} different @[...] mentions and the limit is ${MAX_MENTIONS} per comment. Nothing was posted to ${key}`,
+        "VALIDATION_ERROR",
+        [
+          `Keep at most ${MAX_MENTIONS} @[...] mentions (write the rest as plain names), or split the comment`,
+        ],
+      );
+    }
+    const before = await fetchWorkitem(key, PEOPLE_FIELDS);
+    const people = peopleOnTicket(
+      before,
+      // An account id needs no lookup, so it does not pay for the watcher read.
+      requests.some((request) => request.kind !== "account")
+        ? await fetchWatchers(key)
+        : undefined,
+    );
+    const resolved = await resolveMentions(
+      key,
+      requests,
+      people,
+      searchPeople,
+      commentRetry(key, rawArgs, body, confirmed),
+    );
+    expected = distinctPeople(resolved);
+
+    // The guard: a mention notifies people and cannot be undone, so the first
+    // run is only ever the preview.
+    if (!confirmed) {
+      throw new AxiError(
+        `Refusing to post without --mention. Nothing was posted to ${key}. This comment would notify ${expected.length} ${expected.length === 1 ? "person" : "people"}: ${expected.map(describePerson).join("; ")}`,
+        "VALIDATION_ERROR",
+        [
+          `${commentRetry(key, rawArgs, body, true)()} to post it and notify them`,
+          "To post without notifying anyone, write the names as plain text (no @[...])",
+        ],
+      );
+    }
+    const existing = commentsOf(before);
+    existingIds = new Set(existing.map((c) => String(c.id)));
+    embeddedIsPaged =
+      (totalOf(fieldOf(before, "comment")) ?? 0) > existing.length;
+  }
+
+  const comment = writeAdfDocTempFile(doc);
   try {
     await acliJson<unknown>([
       "jira",
@@ -895,12 +1093,68 @@ async function commentWorkitem(
     comment.cleanup();
   }
 
-  const item = await fetchWorkitem(key);
+  // The post-state read doubles as the mention check and the source for the
+  // bare-@Name note, so the comments ride along only when one of them needs it.
+  const needsPeople = expected.length > 0 || body.includes("@");
+  const item = await fetchWorkitem(
+    key,
+    undefined,
+    needsPeople ? ["reporter", "comment"] : [],
+  );
+
+  const blocks: string[] = [];
+  let message = "Comment added";
+  if (expected.length > 0) {
+    const stored = storedCommentOf(item, existingIds, expected);
+    if (!stored) {
+      const why = embeddedIsPaged
+        ? `${key} has more comments than acli returns in the comment field (only the first ${existingIds.size}, oldest first), so the new comment is not in the re-read and its mentions cannot be confirmed through acli`
+        : "acli returned no new comment in the ticket's comment field";
+      throw new AxiError(
+        `Comment was posted to ${key} but could not be re-read, so its mentions are NOT confirmed (${why}). Do not re-run: that would post it twice`,
+        "UNKNOWN",
+        embeddedIsPaged
+          ? []
+          : [
+              `Run \`jira-axi workitem view ${key} --comments --full --limit 200\` to read the stored comment`,
+            ],
+      );
+    }
+    const mentions = storedMentions(stored.body);
+    const missing = expected.filter(
+      (person) => !mentions.some((m) => m.accountId === person.accountId),
+    );
+    if (missing.length > 0) {
+      throw new AxiError(
+        `Comment ${stored.id} was posted to ${key} but the STORED comment does not mention: ${missing.map(describePerson).join("; ")}. They were NOT notified by it. Do not re-run: that would post it twice`,
+        "UNKNOWN",
+        [
+          `Run \`jira-axi workitem view ${key} --comments --full --limit 200\` to read the stored comment`,
+        ],
+      );
+    }
+    message = `Comment added (id ${stored.id}); mentions confirmed in the stored comment`;
+    blocks.push(
+      renderList("mentions", mentions, [
+        custom("name", (m: StoredMention) => m.name ?? "unknown"),
+        custom("account", (m: StoredMention) => m.accountId),
+      ]),
+    );
+  } else if (confirmed) {
+    blocks.push("mentions: none (the body has no @[...] mention, so nobody was notified)");
+  }
+
+  const note = needsPeople
+    ? bareMentionNote(doc, peopleOnTicket(item))
+    : undefined;
+  if (note) blocks.push(note);
+
   return renderOutput([
-    renderDetail("workitem", { ...item, _message: "Comment added" }, [
+    renderDetail("workitem", { ...item, _message: message }, [
       ...statusResultSchema(),
       field("_message", "message"),
     ]),
+    ...blocks,
     renderHelp(
       getSuggestions({
         domain: "workitem",
@@ -910,4 +1164,24 @@ async function commentWorkitem(
       }),
     ),
   ]);
+}
+
+/**
+ * The comment this command just posted, found in the post-state as a comment
+ * id that was not there before. If someone else commented in the same instant,
+ * prefer the one carrying the expected mentions.
+ */
+function storedCommentOf(
+  item: JsonRecord,
+  existingIds: Set<string>,
+  expected: Person[],
+): JsonRecord | undefined {
+  const fresh = commentsOf(item).filter(
+    (c) => c.id !== undefined && !existingIds.has(String(c.id)),
+  );
+  const complete = fresh.filter((c) => {
+    const mentions = storedMentions(c.body);
+    return expected.every((p) => mentions.some((m) => m.accountId === p.accountId));
+  });
+  return complete[complete.length - 1] ?? fresh[fresh.length - 1];
 }

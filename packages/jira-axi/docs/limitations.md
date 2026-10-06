@@ -47,11 +47,22 @@ There is no `dashboard view`.
 `sprint list-workitems <ID>` requires BOTH the sprint ID and `--board <ID>` (a Jira agile API constraint).
 Find board IDs via `board list`, sprint IDs via `board list-sprints <BOARD_ID>`.
 
-## Comment rendering is lossy
+## Comment rendering falls back to a lossy source
 
-`workitem view --comments` is lossy: acli flattens ADF comment bodies upstream (drops list items, strips marks to double spaces).
-The CLI can only render what acli returns.
-The stored comment ADF is intact - verify the true content in the Jira UI, not through acli.
+`workitem view --comments` reads the stored comments from the item's own `comment` field: list items survive and a mention renders as `@Name`.
+Text marks (bold, links) are still flattened to plain text.
+If acli returns fewer comments in that field than were asked for, the CLI falls back to acli's `comment list`, which flattens ADF upstream (drops list items and mentions, strips marks to double spaces).
+The stored comment ADF is intact either way - verify the true content in the Jira UI.
+Jira embeds only the first 100 comments (oldest first) in that field, so on a longer thread `workitem comment --mention` posts the comment but cannot re-read it: it exits non-zero saying the mentions are not confirmed through acli (the comment IS posted - do not re-run).
+
+## Mentions: comments only, and lookup has gaps
+
+`workitem comment` can write a real @-mention (`@[email]`, `@[Full Name]`, `@[accountId:<id>]` plus `--mention`); `create` and `edit` bodies cannot.
+acli has no user directory search, so a name or email resolves only from the people on the ticket or from someone who is the assignee or reporter of a ticket this login can see, and only on the exact full name.
+Anyone else can be mentioned by account id alone.
+Some people hide their email address, so `@[email]` can miss a person `@[Full Name]` finds.
+Two people sharing a display name are reported as ambiguous when both are seen; Jira's own search may not return both.
+Whether Jira sends the notification email for a mention posted through acli is not verified, and neither is what Jira does with an account id that does not exist.
 
 ## Mutations are non-interactive and `--yes`-gated
 

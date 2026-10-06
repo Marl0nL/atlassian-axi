@@ -38,7 +38,7 @@ const WORKITEM_SUBCOMMAND_DOCS = {
     summary:
       "Show one work item (its `links` row is a count plus an inline summary).",
     flags: [
-      "--comments",
+      "--comments (comments as stored; a mention reads @Name)",
       "--links (list its links: relation, key, type, status, summary, id)",
       "--limit <n> (comments/links shown, default 30; requires --comments or --links)",
       "--full (complete bodies without truncation)",
@@ -94,11 +94,17 @@ const WORKITEM_SUBCOMMAND_DOCS = {
   },
   comment: {
     usage: "comment <KEY>",
-    summary: "Add a comment to a work item.",
+    summary:
+      "Add a comment to a work item. A real @-mention (it notifies the person) is written @[email], @[Full Name] or @[accountId:<id>]; a bare @Name stays plain text.",
     flags: [
-      "--body <text> or --body-file <path> (required; markdown, stored as ADF)",
+      "--body <text> or --body-file <path> (required; markdown, stored as ADF; \\@[ escapes a mention, and nothing in code is a mention)",
+      "--mention (required to post a body containing @[...]; without it the command posts nothing and lists who would be notified - at most 5 mentions per comment)",
     ],
-    examples: ['jira-axi workitem comment TEAM-1 --body "Deployed to staging"'],
+    examples: [
+      'jira-axi workitem comment TEAM-1 --body "Deployed to staging"',
+      'jira-axi workitem comment TEAM-1 --body "@[jane@acme.com] ready for review" --mention',
+      'jira-axi workitem comment TEAM-1 --body "@[accountId:5b10a2844c20165700ede21g] ready for review" --mention',
+    ],
   },
   search: {
     usage: 'search "<JQL>"',

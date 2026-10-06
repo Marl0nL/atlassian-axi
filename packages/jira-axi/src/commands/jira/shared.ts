@@ -74,9 +74,25 @@ export function textOf(value: unknown): string {
   return stripControlChars(parts.join(""));
 }
 
+/**
+ * How a stored mention reads in output: Jira's own `@Name` label, or the
+ * account id (in the form `workitem comment` accepts) when it has none.
+ */
+function mentionLabel(node: JsonRecord): string {
+  const text = typeof node.attrs?.text === "string" ? node.attrs.text.trim() : "";
+  if (text) return text.startsWith("@") ? text : `@${text}`;
+  const id = typeof node.attrs?.id === "string" ? node.attrs.id : "";
+  return id ? `@[accountId:${id}]` : "@unknown";
+}
+
 function walkAdf(node: JsonRecord, parts: string[]): void {
   if (typeof node.text === "string") {
     parts.push(node.text);
+  }
+  // A mention carries its label in attrs, not in `text`; without this an
+  // existing mention vanished from every rendered comment and description.
+  if (node.type === "mention") {
+    parts.push(mentionLabel(node));
   }
   const content = node.content;
   if (Array.isArray(content)) {

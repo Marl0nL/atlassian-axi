@@ -70,6 +70,9 @@ jira-axi workitem list --project TEAM
 # view one item with comments
 jira-axi workitem view TEAM-1 --comments
 
+# comment and @-mention someone (notifies them; without --mention it only previews)
+jira-axi workitem comment TEAM-1 --body "@[jane@acme.com] ready for review" --mention
+
 # create a work item (mutations re-fetch and render the result)
 jira-axi workitem create --project TEAM --type Task --summary "Fix login"
 ```

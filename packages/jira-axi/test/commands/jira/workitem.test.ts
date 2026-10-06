@@ -1213,7 +1213,7 @@ describe("workitem comment", () => {
       const err = error as { code: string; suggestions: string[] };
       expect(err.code).toBe("VALIDATION_ERROR");
       expect(err.suggestions).toContain(
-        "Supported flags: --body, --body-file, --help",
+        "Supported flags: --mention, --body, --body-file, --help",
       );
     }
   });
