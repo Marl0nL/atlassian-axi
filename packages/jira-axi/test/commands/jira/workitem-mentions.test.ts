@@ -427,6 +427,27 @@ describe("workitem comment mentions - stored result", () => {
     );
   });
 
+  it("says why when the ticket's comment field is paged past the new comment", async () => {
+    // Jira embeds only the first page (100, oldest first) of a long thread,
+    // seen live on a 1641-comment item: the posted comment is never in it.
+    const s = site({
+      pageSize: 2,
+      comments: [
+        { author: OTTO.accountId, body: para(text("one")) },
+        { author: OTTO.accountId, body: para(text("two")) },
+        { author: OTTO.accountId, body: para(text("three")) },
+      ],
+    });
+    const err = await failure(comment("@[jane@acme.com] ready", "--mention"));
+    expect(s.writes()).toHaveLength(1);
+    expect(err.code).toBe("UNKNOWN");
+    expect(err.message).toBe(
+      "Comment was posted to TEAM-1 but could not be re-read, so its mentions are NOT confirmed (TEAM-1 has more comments than acli returns in the comment field (only the first 2, oldest first), so the new comment is not in the re-read and its mentions cannot be confirmed through acli). Do not re-run: that would post it twice",
+    );
+    // No `view --comments` hint: that read is paged the same way.
+    expect(err.suggestions).toEqual([]);
+  });
+
   it("reports what is stored, not what was asked for", async () => {
     const s = site({
       comments: [{ author: OTTO.accountId, body: para(text("earlier")) }],

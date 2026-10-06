@@ -44,6 +44,11 @@ export interface MentionSiteOptions {
   stripMentionsOnWrite?: boolean;
   /** Simulate a comment field that does not return the new comment. */
   hideNewComment?: boolean;
+  /**
+   * Simulate Jira's paging of the embedded comment field: only the first N
+   * comments (oldest first) are returned, `total` stays the true count.
+   */
+  pageSize?: number;
 }
 
 export const para = (...content: unknown[]) => ({
@@ -116,10 +121,13 @@ export function makeMentionSite(options: MentionSiteOptions) {
       reporter: payloadUser(options.reporter),
       description: options.description ?? null,
       comment: {
-        comments: comments.slice(0, comments.length - hidden),
+        comments: comments.slice(
+          0,
+          Math.min(comments.length - hidden, options.pageSize ?? Infinity),
+        ),
         total: comments.length,
         startAt: 0,
-        maxResults: comments.length,
+        maxResults: options.pageSize ?? comments.length,
       },
     };
     const fields: Record<string, unknown> = {};

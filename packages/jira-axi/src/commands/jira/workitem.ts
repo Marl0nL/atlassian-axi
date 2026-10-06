@@ -1026,6 +1026,10 @@ async function commentWorkitem(
   const requests = mentionRequests(doc);
   let expected: Person[] = [];
   let existingIds = new Set<string>();
+  // Jira embeds only the FIRST page of the `comment` field (100, oldest first;
+  // seen live on a 1641-comment item), so on a long thread the comment posted
+  // below can never be re-read through it - and acli has no other ADF read.
+  let embeddedIsPaged = false;
 
   if (requests.length > 0) {
     if (requests.length > MAX_MENTIONS) {
@@ -1066,7 +1070,10 @@ async function commentWorkitem(
         ],
       );
     }
-    existingIds = new Set(commentsOf(before).map((c) => String(c.id)));
+    const existing = commentsOf(before);
+    existingIds = new Set(existing.map((c) => String(c.id)));
+    embeddedIsPaged =
+      (totalOf(fieldOf(before, "comment")) ?? 0) > existing.length;
   }
 
   const comment = writeAdfDocTempFile(doc);
@@ -1100,12 +1107,17 @@ async function commentWorkitem(
   if (expected.length > 0) {
     const stored = storedCommentOf(item, existingIds, expected);
     if (!stored) {
+      const why = embeddedIsPaged
+        ? `${key} has more comments than acli returns in the comment field (only the first ${existingIds.size}, oldest first), so the new comment is not in the re-read and its mentions cannot be confirmed through acli`
+        : "acli returned no new comment in the ticket's comment field";
       throw new AxiError(
-        `Comment was posted to ${key} but could not be re-read, so its mentions are NOT confirmed (acli returned no new comment in the ticket's comment field). Do not re-run: that would post it twice`,
+        `Comment was posted to ${key} but could not be re-read, so its mentions are NOT confirmed (${why}). Do not re-run: that would post it twice`,
         "UNKNOWN",
-        [
-          `Run \`jira-axi workitem view ${key} --comments --full --limit 200\` to read the stored comment`,
-        ],
+        embeddedIsPaged
+          ? []
+          : [
+              `Run \`jira-axi workitem view ${key} --comments --full --limit 200\` to read the stored comment`,
+            ],
       );
     }
     const mentions = storedMentions(stored.body);

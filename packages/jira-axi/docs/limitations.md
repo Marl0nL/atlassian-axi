@@ -53,6 +53,7 @@ Find board IDs via `board list`, sprint IDs via `board list-sprints <BOARD_ID>`.
 Text marks (bold, links) are still flattened to plain text.
 If acli returns fewer comments in that field than were asked for, the CLI falls back to acli's `comment list`, which flattens ADF upstream (drops list items and mentions, strips marks to double spaces).
 The stored comment ADF is intact either way - verify the true content in the Jira UI.
+Jira embeds only the first 100 comments (oldest first) in that field, so on a longer thread `workitem comment --mention` posts the comment but cannot re-read it: it exits non-zero saying the mentions are not confirmed through acli (the comment IS posted - do not re-run).
 
 ## Mentions: comments only, and lookup has gaps
 
