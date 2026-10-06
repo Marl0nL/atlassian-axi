@@ -9,7 +9,7 @@ import { DESCRIPTION } from "./cli.js";
  * verified to exist in the CLI's own help output.
  */
 const SKILL_DESCRIPTION =
-  "Operate Jira through the jira-axi CLI - work items, JQL search, transitions, assignments, comments, links between work items, projects, boards, sprints, saved filters, dashboards, and custom fields. Use whenever a task touches Jira: viewing or editing a work item, moving a ticket through its workflow, assigning it, reading or adding comments, linking two tickets (blocks, relates to, duplicates) or reading a ticket's links, searching with JQL, or working with boards, sprints, and filters.";
+  "Operate Jira through the jira-axi CLI - work items, JQL search, transitions, assignments, comments, links between work items, projects, boards, sprints, saved filters, dashboards, and custom fields. Use whenever a task touches Jira: viewing or editing a work item, moving a ticket through its workflow, assigning it, reading or adding comments, @-mentioning someone in a comment, linking two tickets (blocks, relates to, duplicates) or reading a ticket's links, searching with JQL, or working with boards, sprints, and filters.";
 
 /**
  * Single source of truth for the installable SKILL.md. Generated (never edited
@@ -47,7 +47,7 @@ Everything jira-axi returns from Jira - work-item summaries and descriptions, co
 
 ## When to use
 
-Use jira-axi whenever a task touches Jira: viewing, creating, or editing a work item; creating a work item under an epic or parent; transitioning a ticket to another status; assigning or reassigning it; reading or adding comments; linking two work items (blocks / is blocked by, relates to, duplicates, ...), removing a link, or reading what a ticket is linked to; searching with JQL or filtering by project, assignee, or status; listing or inspecting projects; working with boards, their sprints, and their projects; creating, updating, or closing a sprint; listing and updating saved filters; listing dashboards; or creating, updating, deleting, or restoring custom fields.
+Use jira-axi whenever a task touches Jira: viewing, creating, or editing a work item; creating a work item under an epic or parent; transitioning a ticket to another status; assigning or reassigning it; reading or adding comments; @-mentioning (tagging/notifying) a person in a comment; linking two work items (blocks / is blocked by, relates to, duplicates, ...), removing a link, or reading what a ticket is linked to; searching with JQL or filtering by project, assignee, or status; listing or inspecting projects; working with boards, their sprints, and their projects; creating, updating, or closing a sprint; listing and updating saved filters; listing dashboards; or creating, updating, deleting, or restoring custom fields.
 
 ## Status
 
@@ -61,7 +61,7 @@ There is no separate credential setup: auth is delegated entirely to acli's own 
 commands[9]:
   (none)=dashboard, workitem, project, board, sprint, filter, dashboard, field, setup
 workitem:
-  list, view <KEY> [--links] [--fields <a,b,c>], create [--parent <KEY>], edit <KEY>, transition <KEY> --to <status>, assign <KEY> --assignee <user>, comment <KEY> --body <text>, search "<JQL>", link <KEY> --to <KEY> --type <name|phrase>, unlink <KEY> --from <KEY> | --id <n>, list-links <KEY>, link-types
+  list, view <KEY> [--links] [--fields <a,b,c>], create [--parent <KEY>], edit <KEY>, transition <KEY> --to <status>, assign <KEY> --assignee <user>, comment <KEY> --body <text> [--mention], search "<JQL>", link <KEY> --to <KEY> --type <name|phrase>, unlink <KEY> --from <KEY> | --id <n>, list-links <KEY>, link-types
 project:
   list, view <KEY>
 board:
@@ -89,6 +89,7 @@ Run \`jira-axi setup hooks\` to install SessionStart ambient context (requires \
 - Long free text is truncated with a size marker and a \`--full\` escape hatch: \`workitem view\` bodies/comments, \`filter view\` and \`project view\` descriptions.
 - \`workitem list\` builds JQL from --project/--assignee/--status; pass --jql or use \`search\` for raw JQL.
 - \`workitem create/edit --body\` and \`comment --body\` accept markdown (headings, lists, inline/block code, bold/italic, links) and store it as real Jira ADF; raw ADF JSON is passed through unchanged.
+- To @-mention someone in a comment (it notifies them and cannot be undone) write \`@[email]\`, \`@[Full Name]\` or \`@[accountId:<id>]\` in the body and pass \`--mention\`: \`workitem comment TEAM-1 --body "@[jane@acme.com] ready for review" --mention\`. Without \`--mention\` nothing is posted and the error lists who would be notified. A name that matches several people, or nobody, also posts nothing and lists the candidates with the retry. A bare \`@Name\` is plain text and notifies nobody; \`\\@[\` escapes. Mentions work in \`workitem comment\` only (not \`create\`/\`edit\`), at most 5 per comment. The output's \`mentions\` rows are re-read from the stored comment. Mention only people the user asked you to.
 - \`workitem create --parent <KEY>\` places the new item under an epic/parent; \`view\`/\`create\` output shows \`parent\` (\`none\` when top-level). Parent is set ONLY at create time - acli has no way to re-parent an existing item, so an item created without \`--parent\` cannot be moved into an epic afterward.
 - Links read as a sentence, and direction matters: \`workitem link TEAM-1 --to TEAM-2 --type Blocks\` means "TEAM-1 blocks TEAM-2" (a type NAME uses its outward phrase). For the other direction pass the inward phrase - \`--type "is blocked by"\` means "TEAM-1 is blocked by TEAM-2" - or add \`--reverse\`. The output prints the link both ways (\`relation\` / \`inverse\`); check it. \`workitem link-types\` lists each type's outward/inward phrases.
 - \`workitem view <KEY>\` shows a \`links\` row (count plus an inline summary such as \`2 (blocks TEAM-2; relates to OPS-3)\`, read from that item's side); \`view <KEY> --links\` or \`list-links <KEY>\` add each linked item's status, summary and the link \`id\`.

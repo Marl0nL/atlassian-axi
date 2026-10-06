@@ -54,7 +54,7 @@ export function isAdfDoc(value: unknown): value is AdfDoc {
  * is passed through unchanged (no double-encoding); anything else is treated as
  * markdown (plain text with no markup becomes a single paragraph).
  */
-export function bodyToAdf(body: string): AdfDoc {
+export function bodyToAdf(body: string, options: MarkdownOptions = {}): AdfDoc {
   const trimmed = body.trim();
   if (trimmed.startsWith("{")) {
     try {
@@ -64,7 +64,7 @@ export function bodyToAdf(body: string): AdfDoc {
       // Not JSON - fall through and treat as markdown.
     }
   }
-  return markdownToAdf(body);
+  return markdownToAdf(body, options);
 }
 
 /**
@@ -76,7 +76,14 @@ export function writeAdfTempFile(body: string): {
   path: string;
   cleanup: () => void;
 } {
-  const doc = bodyToAdf(body);
+  return writeAdfDocTempFile(bodyToAdf(body));
+}
+
+/** `writeAdfTempFile` for a document the caller already built. */
+export function writeAdfDocTempFile(doc: AdfDoc): {
+  path: string;
+  cleanup: () => void;
+} {
   const dir = mkdtempSync(join(tmpdir(), "jira-axi-adf-"));
   const path = join(dir, "body.json");
   writeFileSync(path, JSON.stringify(doc), "utf8");
@@ -96,10 +103,36 @@ export function writeAdfTempFile(body: string): {
 // Block-level parsing
 // ---------------------------------------------------------------------------
 
+export interface MarkdownOptions {
+  /**
+   * Parse the explicit mention syntax `@[...]` into UNRESOLVED mention nodes
+   * (`{type:"mention", attrs:{token}}`, see `mentionToken`). Off by default: a
+   * body that is not going through mention resolution keeps `@[...]` as text.
+   * The caller MUST replace every such node with a real one (`attrs.id`) before
+   * the document is sent - commands/jira/mentions.ts owns that.
+   */
+  mentions?: boolean;
+}
+
+/** Longest `@[...]` content read as a mention; anything longer stays text. */
+const MAX_MENTION_TOKEN = 200;
+
+/**
+ * The raw `@[...]` content of an unresolved mention node, or undefined for any
+ * other node (including a resolved mention, which carries `attrs.id`).
+ */
+export function mentionToken(node: AdfNode): string | undefined {
+  if (node.type !== "mention") return undefined;
+  const token = node.attrs?.token;
+  return typeof token === "string" && typeof node.attrs?.id !== "string"
+    ? token
+    : undefined;
+}
+
 /** Convert a markdown string to an ADF document. */
-export function markdownToAdf(md: string): AdfDoc {
+export function markdownToAdf(md: string, options: MarkdownOptions = {}): AdfDoc {
   const lines = md.replace(/\r\n?/g, "\n").split("\n");
-  const content = parseBlocks(lines);
+  const content = parseBlocks(lines, options);
   // ADF requires at least one node; a blank body becomes an empty paragraph.
   if (content.length === 0) {
     content.push({ type: "paragraph", content: [] });
@@ -107,7 +140,7 @@ export function markdownToAdf(md: string): AdfDoc {
   return { type: "doc", version: 1, content };
 }
 
-function parseBlocks(lines: string[]): AdfNode[] {
+function parseBlocks(lines: string[], options: MarkdownOptions): AdfNode[] {
   const nodes: AdfNode[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -130,14 +163,14 @@ function parseBlocks(lines: string[]): AdfNode[] {
       nodes.push({
         type: "heading",
         attrs: { level: heading[1].length },
-        content: parseInline(heading[2]),
+        content: parseInline(heading[2], options),
       });
       i++;
       continue;
     }
 
     if (parseListLine(line)) {
-      const list = parseList(lines, i, indentWidth(line));
+      const list = parseList(lines, i, indentWidth(line), options);
       nodes.push(list.node);
       i = list.next;
       continue;
@@ -155,7 +188,7 @@ function parseBlocks(lines: string[]): AdfNode[] {
       paraLines.push(lines[i].trim());
       i++;
     }
-    nodes.push({ type: "paragraph", content: inlineWithHardBreaks(paraLines) });
+    nodes.push({ type: "paragraph", content: inlineWithHardBreaks(paraLines, options) });
   }
   return nodes;
 }
@@ -228,6 +261,7 @@ function parseList(
   lines: string[],
   start: number,
   baseIndent: number,
+  options: MarkdownOptions,
   depth = 0,
 ): { node: AdfNode; next: number } {
   const first = parseListLine(lines[start]) as ListLine;
@@ -247,7 +281,7 @@ function parseList(
     // the cap only stops a pathological indent ladder from overflowing the
     // stack (an uncaught RangeError -> raw crash).
     if (item.indent > baseIndent && depth < MAX_LIST_DEPTH) {
-      const nested = parseList(lines, i, item.indent, depth + 1);
+      const nested = parseList(lines, i, item.indent, options, depth + 1);
       if (items.length === 0) {
         items.push({ type: "listItem", content: [nested.node] });
       } else {
@@ -262,7 +296,7 @@ function parseList(
 
     items.push({
       type: "listItem",
-      content: [{ type: "paragraph", content: parseInline(item.text) }],
+      content: [{ type: "paragraph", content: parseInline(item.text, options) }],
     });
     i++;
   }
@@ -273,11 +307,14 @@ function parseList(
   return { node, next: i };
 }
 
-function inlineWithHardBreaks(paraLines: string[]): AdfNode[] {
+function inlineWithHardBreaks(
+  paraLines: string[],
+  options: MarkdownOptions,
+): AdfNode[] {
   const out: AdfNode[] = [];
   paraLines.forEach((line, index) => {
     if (index > 0) out.push({ type: "hardBreak" });
-    out.push(...parseInline(line));
+    out.push(...parseInline(line, options));
   });
   return out;
 }
@@ -301,8 +338,11 @@ const PUNCT = new Set("\\`*_{}[]()#+-.!>~".split(""));
 const MAX_INLINE_DEPTH = 50;
 
 /** Parse inline markdown (marks, code, links) into ADF inline nodes. */
-export function parseInline(text: string): AdfNode[] {
-  return parseInlineWithMarks(text, [], 0);
+export function parseInline(
+  text: string,
+  options: MarkdownOptions = {},
+): AdfNode[] {
+  return parseInlineWithMarks(text, [], 0, options);
 }
 
 function textNode(text: string, marks: AdfMark[]): AdfNode {
@@ -315,6 +355,7 @@ function parseInlineWithMarks(
   text: string,
   marks: AdfMark[],
   depth = 0,
+  options: MarkdownOptions = {},
 ): AdfNode[] {
   // Nested marks/links (`[[[...`, `***...`) recurse per level; beyond the cap
   // keep the remaining slice as plain text so a pathological input degrades
@@ -340,6 +381,39 @@ function parseInlineWithMarks(
       buf += text[i + 1];
       i += 2;
       continue;
+    }
+
+    if (options.mentions) {
+      // `\@[` is the escape: a literal "@[" that is never a mention.
+      if (c === "\\" && text[i + 1] === "@" && text[i + 2] === "[") {
+        buf += "@";
+        i += 2;
+        continue;
+      }
+      // Explicit mention: @[...]. Never inside link text (a link mark cannot
+      // carry a mention), never glued to a word (`user@[x]`), and never when
+      // the bracket is really a link (`@[label](href)`).
+      if (
+        c === "@" &&
+        text[i + 1] === "[" &&
+        !marks.some((mark) => mark.type === "link") &&
+        !/\w/.test(text[i - 1] ?? "") &&
+        !matchLink(text, i + 1)
+      ) {
+        const close = text.indexOf("]", i + 2);
+        const token = close === -1 ? "" : text.slice(i + 2, close).trim();
+        if (
+          token !== "" &&
+          token.length <= MAX_MENTION_TOKEN &&
+          !token.includes("[")
+        ) {
+          flush();
+          // No marks: an ADF mention node cannot carry bold/italic.
+          nodes.push({ type: "mention", attrs: { token } });
+          i = close + 1;
+          continue;
+        }
+      }
     }
 
     // Inline code span: a run of backticks, closed by an equal-length run.
@@ -369,6 +443,7 @@ function parseInlineWithMarks(
             link.label,
             [...marks, { type: "link", attrs: { href: link.href } }],
             depth + 1,
+            options,
           ),
         );
         i = link.end;
@@ -387,6 +462,7 @@ function parseInlineWithMarks(
               text.slice(i + 2, close),
               [...marks, { type: "strong" }],
               depth + 1,
+              options,
             ),
           );
           i = close + 2;
@@ -406,6 +482,7 @@ function parseInlineWithMarks(
               text.slice(i + 1, close),
               [...marks, { type: "em" }],
               depth + 1,
+              options,
             ),
           );
           i = close + 1;

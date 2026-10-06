@@ -3,6 +3,7 @@ import {
   bodyToAdf,
   isAdfDoc,
   markdownToAdf,
+  mentionToken,
   parseInline,
   type AdfNode,
 } from "../src/adf.js";
@@ -380,5 +381,72 @@ describe("markdownToAdf - structural integrity", () => {
     };
     doc.content.forEach(walk);
     expect(texts.some((t) => t.includes("## Heading"))).toBe(false);
+  });
+});
+
+describe("markdownToAdf - mention tokens", () => {
+  const inline = (md: string) =>
+    markdownToAdf(md, { mentions: true }).content[0].content ?? [];
+  const tokens = (node: AdfNode): string[] => [
+    ...(mentionToken(node) !== undefined ? [mentionToken(node) as string] : []),
+    ...(node.content ?? []).flatMap(tokens),
+  ];
+  const allTokens = (md: string) =>
+    markdownToAdf(md, { mentions: true }).content.flatMap(tokens);
+
+  it("leaves @[...] as plain text unless mentions are asked for", () => {
+    expect(markdownToAdf("hi @[jane@acme.com]").content[0].content).toEqual([
+      { type: "text", text: "hi @[jane@acme.com]" },
+    ]);
+  });
+
+  it.each([
+    ["an email", "@[jane@acme.com]", "jane@acme.com"],
+    ["a full name", "@[Jane Doe]", "Jane Doe"],
+    ["an account id", "@[accountId:712020:abc-12]", "accountId:712020:abc-12"],
+  ])("turns %s into an unresolved mention node", (_name, md, token) => {
+    expect(inline(`hi ${md}, thanks`)).toEqual([
+      { type: "text", text: "hi " },
+      { type: "mention", attrs: { token } },
+      { type: "text", text: ", thanks" },
+    ]);
+  });
+
+  it.each([
+    ["a bare @Name", "@Jane Doe hello"],
+    ["an email in prose", "mail jane@acme.com"],
+    ["@here", "@here done"],
+    ["the escape", "\\@[Jane Doe]"],
+    ["inline code", "`@[Jane Doe]`"],
+    ["a code block", "```\n@[Jane Doe]\n```"],
+    ["link text", "[see @[Jane Doe]](https://example.com)"],
+    ["a link after an @", "@[docs](https://example.com)"],
+    ["a word glued to the @", "user@[Jane Doe]"],
+    ["empty brackets", "@[] and @[  ]"],
+    ["an unclosed bracket", "@[Jane Doe"],
+  ])("keeps %s as plain text", (_name, md) => {
+    expect(allTokens(md)).toEqual([]);
+  });
+
+  it("drops the backslash of the escape and keeps the text", () => {
+    expect(inline("\\@[Jane Doe] is the syntax")).toEqual([
+      { type: "text", text: "@[Jane Doe] is the syntax" },
+    ]);
+  });
+
+  it("finds mentions inside bold, list items and headings, without marks", () => {
+    expect(
+      allTokens("# For @[Ann Lee]\n\n- **cc @[Bo Ray]**\n- plain @[cy@acme.com]"),
+    ).toEqual(["Ann Lee", "Bo Ray", "cy@acme.com"]);
+    expect(inline("**cc @[Bo Ray]**")).toEqual([
+      { type: "text", text: "cc ", marks: [{ type: "strong" }] },
+      { type: "mention", attrs: { token: "Bo Ray" } },
+    ]);
+  });
+
+  it("does not treat a resolved mention node as a token", () => {
+    expect(
+      mentionToken({ type: "mention", attrs: { id: "abc", text: "@Ann" } }),
+    ).toBeUndefined();
   });
 });

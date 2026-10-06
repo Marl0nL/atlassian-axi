@@ -71,7 +71,7 @@ With `--links` the row is the bare count and the rows follow, under the same `re
 - `links: unknown` means acli did not return the field; it is never rendered as `0`.
 - The comments sub-list always prints a `count:` line (even at zero), reporting the true total so a shortened page is never silent.
 - Fields acli did not return are reported in a `note:` line, so a null row is not mistaken for an empty value.
-- `--comments` is lossy: acli flattens comment ADF upstream (drops list items, strips marks). See [limitations](./limitations.md). The stored comment ADF is intact in the Jira UI.
+- `--comments` reads the stored comments from the item's own `comment` field, so list items survive and a mention renders as `@Name` (descriptions too). Only when acli does not return enough of that field does it fall back to acli's lossy `comment list` - see [limitations](./limitations.md).
 
 ### `jira-axi workitem create`
 
@@ -146,10 +146,29 @@ Add a comment, then re-fetch and render the item.
 
 **Flags:**
 - `--body <text>` or `--body-file <path>` (required) markdown, stored as ADF.
+- `--mention` required to post a body that contains a mention (see below).
 
 ```bash
 jira-axi workitem comment TEAM-1 --body "Deployed to staging"
+jira-axi workitem comment TEAM-1 --body "@[jane@acme.com] ready for review" --mention
 ```
+
+**Mentions.** A real @-mention notifies the person and cannot be taken back, so it is always explicit:
+
+| Written in the body | Meaning |
+|---|---|
+| `@[jane@acme.com]` | mention by email |
+| `@[Jane Doe]` | mention by full display name (any case) |
+| `@[accountId:5b10a2844c20165700ede21g]` | mention by account id, no lookup |
+| `@Jane Doe`, `jane@acme.com`, `@here`, `\@[Jane Doe]`, anything in inline code or a code block, link text | plain text, never a mention |
+
+- **Resolution never guesses.** An account id is used as given. A name or email is looked up among the people already on the ticket (assignee, reporter, watchers, comment authors, people mentioned before), then by a read-only ticket search on assignee/reporter. Exactly one account must match.
+- **Two or more matches, or none: `VALIDATION_ERROR` (exit 2) and nothing is posted.** The error lists each candidate's name and account id and prints the retry using `@[accountId:...]`. There is no fallback to plain text. "None" cannot tell an unknown person from one with no ticket this login can see (acli has no user directory search, and the ticket search never matches part of a name) - use the email or the account id.
+- **`--mention` is the confirmation.** Without it the command posts nothing and the error names who would be notified, with the command to run. At most 5 different mentions per comment.
+- **The result is re-read.** After posting, the stored comment is read back and its mentions printed as `mentions[n]{name,account}`. If the stored comment lacks an expected mention the command exits non-zero and says so (the comment IS posted - do not re-run).
+- **A bare `@Name` is not an error.** When it matches someone on the ticket, a `note:` line says it was stored as plain text and shows the bracket form.
+- Mentions are supported in `comment` only, not in `create`/`edit` bodies (there `@[...]` stays text). A raw ADF body containing mention nodes goes through the same `--mention` guard.
+- Not verified: that Jira sends the notification email for a mention posted this way, and what Jira does with an account id that does not exist.
 
 ### `jira-axi workitem search "<JQL>"`
 
