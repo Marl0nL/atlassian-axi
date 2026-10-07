@@ -68,21 +68,24 @@ confluence-axi auth login
 
 ## `confluence-axi auth login --token`
 
-API-token login for agents/CI.
-No browser.
+API-token login. No browser.
+At a terminal it asks for the token at a hidden prompt, so the whole sign-in is one plain command; for agents/CI the token is piped.
 Persists the credential to the store for use against the Confluence REST API.
 
 **Flags:**
 - `--token` (required) - selects API-token mode; the token itself is read from stdin, never as an argument.
-- `--site <site>` - site host (optional; falls back to `ATLASSIAN_SITE` then stored value).
+- `--site <site>` - site host (optional; falls back to `ATLASSIAN_SITE`, then the stored value, then Reposit's own site, `repositpower.atlassian.net`).
 - `--email <email>` - account email (optional; falls back to `ATLASSIAN_EMAIL` then stored value).
 
 ```bash
+# at a terminal: paste the token when asked (it shows as stars)
+confluence-axi auth login --token --email me@repositpower.com
+# piped (agents/CI)
 echo -n "$TOKEN" | confluence-axi auth login --token --site acme.atlassian.net --email me@acme.com
 ```
 
 **Caveats:**
-- The token MUST arrive on stdin; reading from a TTY throws.
+- The token is never an argument: it arrives on stdin, or at the hidden prompt when stdin is a terminal.
 
 ## `confluence-axi auth status`
 

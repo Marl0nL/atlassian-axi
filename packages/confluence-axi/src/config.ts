@@ -682,17 +682,23 @@ export function sanitizeToken(raw: string): string {
 }
 
 /**
- * Read the API token from stdin. Throws (never blocks) on an interactive TTY,
- * rejects an empty pipe, strips one pair of surrounding quotes, and rejects
- * tokens carrying internal whitespace or control characters (a real Atlassian
- * API token has neither — their presence means a mangled paste). The token is
+ * Read the API token from stdin. On an interactive TTY it asks through
+ * `askAtTerminal` (a hidden prompt, so a person can paste the token into one
+ * plain command with no pipe); without one it throws (never blocks). Rejects
+ * an empty answer, strips one pair of surrounding quotes, and rejects tokens
+ * carrying internal whitespace or control characters (a real Atlassian API
+ * token has neither — their presence means a mangled paste). The token is
  * only ever read here — never from a CLI flag/argv.
  */
-export async function readTokenFromStdin(): Promise<string> {
-  if (isStdinTTY()) {
+export async function readTokenFromStdin(
+  askAtTerminal?: () => Promise<string>,
+): Promise<string> {
+  if (isStdinTTY() && !askAtTerminal) {
     throw tokenRequiredError();
   }
-  const value = sanitizeToken(await readStdin());
+  const value = sanitizeToken(
+    isStdinTTY() && askAtTerminal ? await askAtTerminal() : await readStdin(),
+  );
   if (value.length === 0) {
     throw tokenRequiredError();
   }

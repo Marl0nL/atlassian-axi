@@ -28,6 +28,16 @@ describe("errors", () => {
     expect(err.suggestions.join(" ")).toContain("auth login");
   });
 
+  it("drops the spinner and escape sequences acli prints with no terminal, leaving its words", () => {
+    // acli 1.3.30: cursor/mode sequences and braille spinner frames share the line with the error.
+    const err = mapError(
+      "\u001b[?25l\u001b[?2004h⣽ Fetching...\u001b[D⣻ Fetching...\u001b[D\u001b[2K\u001b[?2004l\u001b[?25h✗ Error: unauthorized: use 'acli jira auth login' to authenticate",
+      1,
+    );
+    expect(err.code).toBe("AUTH_REQUIRED");
+    expect(err.message).toBe("unauthorized: use 'acli jira auth login' to authenticate");
+  });
+
   it("maps not-found, forbidden, rate-limit and invalid stderr to typed codes", () => {
     expect(mapError("✗ Error: work item TEAM-9 not found").code).toBe(
       "NOT_FOUND",

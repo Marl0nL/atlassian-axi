@@ -349,6 +349,19 @@ describe("readTokenFromStdin", () => {
     });
   });
 
+  it("on an interactive TTY asks through the prompt it is handed, with the same cleaning", async () => {
+    const original = process.stdin.isTTY;
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    try {
+      await expect(readTokenFromStdin(async () => ' "ATATTtyped" ')).resolves.toBe("ATATTtyped");
+      await expect(readTokenFromStdin(async () => "ATATT typed")).rejects.toMatchObject({
+        code: "VALIDATION_ERROR",
+      });
+    } finally {
+      Object.defineProperty(process.stdin, "isTTY", { value: original, configurable: true });
+    }
+  });
+
   it("throws (never blocks) on an interactive TTY", async () => {
     const original = process.stdin.isTTY;
     Object.defineProperty(process.stdin, "isTTY", {

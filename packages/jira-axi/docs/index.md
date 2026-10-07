@@ -21,7 +21,7 @@ Install and invocation guidance lives in [Getting started](./getting-started.md#
 ## Fast facts for agents
 
 - Flags come AFTER the command: `jira-axi workitem list --project TEAM`, never before.
-- Auth is delegated to `acli`. `jira-axi` has no auth command; run `acli jira auth login` once (install acli via `brew install acli`).
+- Auth is delegated to `acli`: `jira-axi` stores no credentials. Run `acli jira auth login` once (install acli via `brew install acli`), or without a terminal pipe an API token to `jira-axi auth login --token --email <email>`; `jira-axi auth status` checks it.
 - Work item and comment bodies accept a markdown subset (converted to ADF); raw ADF JSON passes through unchanged.
 - Long free text truncates by default with a size marker; the detail command that renders it takes `--full` (see [commands](./commands.md)).
 - All structured output is TOON-encoded. There is no plain-text or JSON mode.

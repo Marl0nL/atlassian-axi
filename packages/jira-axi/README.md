@@ -47,11 +47,23 @@ Both paths in detail, including what the hooks add: [Getting started](https://gi
 - Node >= 20.
 - `acli` (the Atlassian CLI) - required, this tool shells out to it for every Jira operation.
   Install it with `brew install acli`.
-- An `acli` login. `jira-axi` has NO auth command of its own; authenticate `acli` once:
+- An `acli` login. `jira-axi` keeps no credentials of its own; authenticate `acli` once:
 
 ```bash
 acli jira auth login
 ```
+
+  That login is interactive: its browser flow (`--web`) always ends with a site menu in the
+  terminal, and has no flag for it. Where there is no terminal, use an API token instead,
+  which asks nothing (the site defaults to `repositpower.atlassian.net`; `--site` overrides):
+
+```bash
+echo -n "$TOKEN" | jira-axi auth login --token --email me@repositpower.com
+jira-axi auth status    # exit 0 only when Jira answers through acli's login
+```
+
+  `jira-axi` runs the `acli` that `JIRA_AXI_ACLI` names if it is set, else the one an installer
+  placed beside it (`<tool folder>/vendor/acli`) when there is one, else `acli` from the `PATH`.
 
 If `acli` is not installed or not logged in, `jira-axi` commands error with a next-step suggestion.
 

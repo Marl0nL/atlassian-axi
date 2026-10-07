@@ -91,9 +91,25 @@ const patterns: ErrorPattern[] = [
   },
 ];
 
+/**
+ * Strip what acli prints for a terminal even when there is none: cursor and
+ * mode escape sequences, and the braille spinner with its caption ("⣽
+ * Authenticating..."), which share the line with the error that follows them
+ * (seen with acli 1.3.30: `✗ Error: authentication failed` arrives at the
+ * end of one such line).
+ */
+export function stripAcliNoise(raw: string): string {
+  return (
+    raw
+      // eslint-disable-next-line no-control-regex
+      .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+      .replace(/[\u2800-\u28ff]\s*[A-Za-z]+\.{3}\s*/g, "")
+  );
+}
+
 /** Strip acli's "✗ Error: "/"✗ " decoration so messages stay clean and token-lean. */
 function cleanAcliError(raw: string): string {
-  return firstLine(raw)
+  return firstLine(stripAcliNoise(raw))
     .replace(/^[✗x]?\s*Error:\s*/i, "")
     .replace(/^✗\s*/, "");
 }
