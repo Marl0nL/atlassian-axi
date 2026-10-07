@@ -38,14 +38,16 @@ describe("auth status", () => {
     const fake = makeAcliFake([
       {
         match: isProbe,
-        result: { stdout: "", stderr: "✗ Error: unauthorized: use 'acli jira auth login' to authenticate", exitCode: 1 },
+        // As acli 1.3.30 prints it with no terminal: a spinner and its escape sequences on the same line.
+        result: { stdout: "", stderr: "\u001b[?25l⣽ Fetching...\u001b[D\u001b[2K\u001b[?25h✗ Error: unauthorized: use 'acli jira auth login' to authenticate", exitCode: 1 },
       },
     ]);
     setAcliRunner(fake.runner);
-    await expect(authCommand(["status"])).rejects.toMatchObject({
-      code: "AUTH_REQUIRED",
-      message: expect.stringContaining("expired"),
-    });
+    const failure = await authCommand(["status"]).catch((error: unknown) => error as { code: string; message: string });
+    expect(failure).toMatchObject({ code: "AUTH_REQUIRED", message: expect.stringContaining("expired") });
+    expect(failure.message).toContain("(unauthorized: use 'acli jira auth login' to authenticate)");
+    expect(failure.message).not.toContain("\u001b");
+    expect(failure.message).not.toMatch(/⣽|Fetching/);
   });
 
   it("fails with ACLI_NOT_INSTALLED, without probing, when acli is missing", async () => {
@@ -97,15 +99,26 @@ describe("auth login --token", () => {
 
   it("says so, without the token, when acli refuses the sign-in", async () => {
     const fake = makeAcliFake([
-      { match: isLogin, result: { stdout: "", stderr: "✗ Error: authentication failed for ATATTtok", exitCode: 1 } },
+      {
+        match: isLogin,
+        // As acli 1.3.30 prints it with no terminal: the error ends a line of spinner frames and escape sequences.
+        result: {
+          stdout: "",
+          stderr: "\u001b[?25l\u001b[?2004h⣽ Authenticating...\u001b[D⣻ Authenticating...\u001b[D\u001b[2K\u001b[?2004l\u001b[?25h✗ Error: authentication failed for ATATTtok",
+          exitCode: 1,
+        },
+      },
     ]);
     setAcliRunner(fake.runner);
     const failure = await withStdin("ATATTtok", () =>
       authCommand(["login", "--token", "--email", "sam@repositpower.com"]),
     ).catch((error: unknown) => error as { code: string; message: string });
     expect(failure).toMatchObject({ code: "AUTH_REQUIRED" });
-    expect((failure as { message: string }).message).toContain("authentication failed");
+    // What a person is shown: acli's words alone, the token hidden, nothing of its terminal decoration.
+    expect((failure as { message: string }).message).toContain("(authentication failed for <token>)");
     expect((failure as { message: string }).message).not.toContain("ATATTtok");
+    expect((failure as { message: string }).message).not.toContain("\u001b");
+    expect((failure as { message: string }).message).not.toMatch(/⣽|⣻|Authenticating/);
   });
 
   it("refuses, before acli is asked anything, a missing email, a typo'd flag, a terminal with nothing piped and a mangled token", async () => {

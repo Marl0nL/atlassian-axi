@@ -1,7 +1,7 @@
 import { AxiError } from "axi-sdk-js";
 import { renderHelp, renderOutput, takeBoolFlag, takeValueFlag } from "@atlassian-axi/core";
 import { acliJson, acliRaw, acliVersion } from "../acli.js";
-import { acliNotInstalledError } from "../errors.js";
+import { acliNotInstalledError, stripAcliNoise } from "../errors.js";
 
 /**
  * Reposit's own site, used by `auth login --token` when --site does not name
@@ -115,7 +115,7 @@ async function tokenLogin(args: string[]): Promise<string> {
   );
   if (result.exitCode !== 0) {
     // acli's own words, minus its decoration and (should it ever echo it) the token.
-    const said = `${result.stderr}\n${result.stdout}`
+    const said = stripAcliNoise(`${result.stderr}\n${result.stdout}`)
       .split(token)
       .join("<token>")
       .split("\n")
