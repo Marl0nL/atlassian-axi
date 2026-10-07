@@ -344,6 +344,48 @@ describe("auth login --token (validate-then-persist)", () => {
     expect(config.readTokenFromStdin).not.toHaveBeenCalled();
   });
 
+  it("uses Reposit's site when none is given, so only the email and token are asked for", async () => {
+    config.resolveCredential.mockResolvedValue({ sources: {} });
+    config.readTokenFromStdin.mockResolvedValue("tok-123");
+    const fetchMock = stubPing(200);
+
+    const out = await authCommand(["login", "--token", "--email", "sam@repositpower.com"]);
+
+    expect(config.saveCredential).toHaveBeenCalledWith({
+      site: "repositpower.atlassian.net",
+      email: "sam@repositpower.com",
+      apiToken: "tok-123",
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("https://repositpower.atlassian.net/");
+    expect(out).toContain("site: repositpower.atlassian.net");
+  });
+
+  it("a stored or --site value still wins over the default site", async () => {
+    config.resolveCredential.mockResolvedValue({ site: "stored.atlassian.net", sources: {} });
+    config.readTokenFromStdin.mockResolvedValue("tok-123");
+    stubPing(200);
+
+    await authCommand(["login", "--token", "--email", "me@acme.com"]);
+    expect(config.saveCredential).toHaveBeenLastCalledWith(expect.objectContaining({ site: "stored.atlassian.net" }));
+
+    await authCommand(["login", "--token", "--email", "me@acme.com", "--site", "acme.atlassian.net"]);
+    expect(config.saveCredential).toHaveBeenLastCalledWith(expect.objectContaining({ site: "acme.atlassian.net" }));
+  });
+
+  it("at a terminal the token is asked for at a hidden prompt, never taken from an argument", async () => {
+    config.resolveCredential.mockResolvedValue({ sources: {} });
+    // Stand in for the real reader at a terminal: it asks through the prompt it is handed.
+    config.readTokenFromStdin.mockImplementation(async (ask?: () => Promise<string>) => ask?.() ?? "");
+    prompt.promptHidden.mockResolvedValue("tok-typed");
+    stubPing(200);
+
+    await authCommand(["login", "--token", "--email", "sam@repositpower.com"]);
+
+    expect(prompt.promptHidden).toHaveBeenCalledTimes(1);
+    expect(String(prompt.promptHidden.mock.calls[0]?.[0])).toContain("API token");
+    expect(config.saveCredential).toHaveBeenCalledWith(expect.objectContaining({ apiToken: "tok-typed" }));
+  });
+
   it("works without a TTY (the agent/CI path is never browser-gated)", async () => {
     config.isInteractiveTTY.mockReturnValue(false);
     config.resolveCredential.mockResolvedValue({ sources: {} });

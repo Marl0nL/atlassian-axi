@@ -5,6 +5,7 @@ import { runAxiCli } from "axi-sdk-js";
 import { closestCommand, renderError } from "@atlassian-axi/core";
 import { homeCommand } from "./commands/home.js";
 import { setupCommand, SETUP_HELP } from "./commands/setup.js";
+import { authCommand, AUTH_HELP } from "./commands/auth.js";
 import { workitemCommand } from "./commands/jira/workitem.js";
 import { projectCommand, PROJECT_HELP } from "./commands/jira/project.js";
 import { boardCommand, BOARD_HELP } from "./commands/jira/board.js";
@@ -28,13 +29,13 @@ type MainOptions = {
 };
 
 export const TOP_HELP = `usage: jira-axi [command] [args] [flags]
-commands[9]:
-  (none)=dashboard, workitem, project, board, sprint, filter, dashboard, field, setup
+commands[10]:
+  (none)=dashboard, workitem, project, board, sprint, filter, dashboard, field, auth, setup
 flags[2]:
   --help, -v/-V/--version
 notes[2]:
   Token-efficient TOON output, contextual suggestions, idempotent mutations.
-  Auth is delegated to acli's own login (\`acli jira auth login\`) - no extra credential setup.
+  Auth is delegated to acli's own login (\`acli jira auth login\`) - no extra credential setup; \`jira-axi auth status\` checks it.
 examples:
   jira-axi
   jira-axi workitem list --project TEAM
@@ -59,6 +60,7 @@ const COMMAND_HELP: Record<string, string> = {
   filter: FILTER_HELP,
   dashboard: DASHBOARD_HELP,
   field: FIELD_HELP,
+  auth: AUTH_HELP,
   setup: SETUP_HELP,
 };
 
@@ -72,6 +74,7 @@ const COMMANDS: Record<string, CommandFn> = {
   filter: (args) => filterCommand(args),
   dashboard: (args) => dashboardCommand(args),
   field: (args) => fieldCommand(args),
+  auth: (args) => authCommand(args),
   setup: (args) => setupCommand(args),
 };
 

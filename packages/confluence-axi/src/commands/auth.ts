@@ -31,12 +31,19 @@ import {
 import { promptHidden, promptSelect } from "../prompt.js";
 import { renderHelp, renderOutput } from "@atlassian-axi/core";
 
+/**
+ * Reposit's own site, used by `auth login --token` when no flag, env var or
+ * stored config names one. This fork is Reposit's line; --site overrides it.
+ */
+export const DEFAULT_SITE = "repositpower.atlassian.net";
+
 export const AUTH_HELP = `usage: confluence-axi auth <login|status|logout> [flags]
 Manage Confluence auth. Two modes:
   oauth      browser login (the default \`auth login\`) — Bearer tokens against
              api.atlassian.com, auto-refreshed; needs an interactive terminal.
-  api-token  \`auth login --token\` — site+email+API token for agents/CI; the
-             token is read from stdin only, never as an argument.
+  api-token  \`auth login --token\` — site+email+API token; the token is never an
+             argument: at a terminal it is asked for (hidden), otherwise read
+             from stdin (agents/CI).
 
 login            OAuth browser login. Opens auth.atlassian.com, catches the
                  http://localhost:8765/callback redirect, stores tokens + cloudId
@@ -44,9 +51,10 @@ login            OAuth browser login. Opens auth.atlassian.com, catches the
                  Requires your own registered 3LO app (no shipped default):
                  ATLASSIAN_AXI_OAUTH_CLIENT_ID (required) + client secret from
                  ATLASSIAN_AXI_OAUTH_CLIENT_SECRET env or prompted once and stored.
-login --token    API-token login (agents/CI; no browser).
-                 --site <site>   e.g. mysite.atlassian.net (falls back to ATLASSIAN_SITE / stored)
+login --token    API-token login (no browser).
+                 --site <site>   falls back to ATLASSIAN_SITE / stored, then ${DEFAULT_SITE}
                  --email <email> account email (falls back to ATLASSIAN_EMAIL / stored)
+                 at a terminal: confluence-axi auth login --token --email e   (asks for the token, hidden)
                  token via stdin: echo -n "<token>" | confluence-axi auth login --token --site s --email e
 status           Active mode, token expiry, and the Confluence REST half.
 logout           Clear OAuth tokens + API credential/keychain.
@@ -285,7 +293,7 @@ async function tokenLogin(args: string[]): Promise<string> {
   // Flags win, then fall back to any already-resolved (env/stored) values so a
   // re-login only needs to supply what changed.
   const resolved = await resolveCredential();
-  const site = normalizeSite(siteFlag ?? resolved.site);
+  const site = normalizeSite(siteFlag ?? resolved.site ?? DEFAULT_SITE);
   const email = (emailFlag ?? resolved.email)?.trim();
 
   if (!site || !email) {
@@ -301,8 +309,14 @@ async function tokenLogin(args: string[]): Promise<string> {
     );
   }
 
-  // Token is stdin-only; TTY throws before we touch anything else.
-  const apiToken = await readTokenFromStdin();
+  // Never an argument. At a terminal the person pastes it at a hidden prompt,
+  // so the whole sign-in is one plain command with no pipe; otherwise stdin.
+  const apiToken = await readTokenFromStdin(() =>
+    promptHidden(
+      "Paste your Atlassian API token and press Enter (it shows as stars)",
+      "Run the same command again and paste the token before pressing Enter",
+    ),
+  );
   const credential: AtlassianCredential = { site, email, apiToken };
 
   // Validate BEFORE persisting so a mangled paste never overwrites a

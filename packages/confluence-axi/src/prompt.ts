@@ -9,9 +9,14 @@ import { AxiError } from "./errors.js";
 
 /**
  * Read a secret from the terminal with echo suppressed (each keystroke is
- * masked). Used once, on first OAuth login, for the client secret.
+ * masked). Used on first OAuth login for the client secret, and by
+ * `auth login --token` at a terminal for the API token. `retry` is the line
+ * suggested when the answer is empty.
  */
-export function promptHidden(label: string): Promise<string> {
+export function promptHidden(
+  label: string,
+  retry = "Re-run `confluence-axi auth login` and paste the OAuth client secret",
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const stdin = process.stdin;
     process.stderr.write(`${label}: `);
@@ -34,7 +39,7 @@ export function promptHidden(label: string): Promise<string> {
           if (value.trim() === "") {
             reject(
               new AxiError("Empty secret — nothing was stored", "VALIDATION_ERROR", [
-                "Re-run `confluence-axi auth login` and paste the OAuth client secret",
+                retry,
               ]),
             );
           } else {

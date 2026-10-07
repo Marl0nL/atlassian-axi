@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { AxiError, acliNotInstalledError, mapError } from "./errors.js";
 
 /** Result of running the `acli` binary. */
@@ -18,11 +21,29 @@ export type AcliRunner = (args: string[], stdin?: string) => Promise<ExecResult>
 const MAX_BUFFER_BYTES = 10 * 1024 * 1024; // 10 MB
 const DEFAULT_TIMEOUT_MS = 15_000;
 
+/**
+ * Which acli to run. An installer that ships a pinned acli beside this tool
+ * (Reposit's does: `<tool folder>/vendor/acli`, three levels above the built
+ * `dist/bin/jira-axi.js`) is preferred over whatever `acli` is on the PATH, so
+ * the version that was checked is the one that runs. `JIRA_AXI_ACLI` names one
+ * outright. Otherwise: `acli` from the PATH.
+ */
+export function acliPath(
+  env: NodeJS.ProcessEnv = process.env,
+  here: string = dirname(fileURLToPath(import.meta.url)),
+): string {
+  if (env["JIRA_AXI_ACLI"]) {
+    return env["JIRA_AXI_ACLI"];
+  }
+  const shipped = join(here, "..", "..", "..", "vendor", "acli");
+  return existsSync(shipped) ? shipped : "acli";
+}
+
 /** Real runner: shell out to `acli` via execFile (argv only, no shell). */
 const defaultRunner: AcliRunner = (args, stdin) =>
   new Promise((resolve) => {
     const child = execFile(
-      "acli",
+      acliPath(),
       args,
       { maxBuffer: MAX_BUFFER_BYTES, timeout: DEFAULT_TIMEOUT_MS },
       (error, stdout, stderr) => {

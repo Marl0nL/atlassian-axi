@@ -34,13 +34,13 @@ Use jira-axi whenever a task touches Jira: viewing, creating, or editing a work 
 
 The dashboard, the acli-backed Jira commands (`workitem`, `project`, `board`, `sprint`, `filter`, `dashboard`, `field`), and `setup hooks` work today. (The inherited `update` command exists but is PROHIBITED on this fork - see Invocation.)
 jira-axi shells out to Atlassian's `acli` - install it first (`brew install acli`) and log in with `acli jira auth login`.
-There is no separate credential setup: auth is delegated entirely to acli's own login.
+There is no separate credential store: auth is acli's own login. `jira-axi auth status` says whether it works (exit 0 only when Jira answers).
 
 ## Commands
 
 ```
-commands[9]:
-  (none)=dashboard, workitem, project, board, sprint, filter, dashboard, field, setup
+commands[10]:
+  (none)=dashboard, workitem, project, board, sprint, filter, dashboard, field, auth, setup
 workitem:
   list, view <KEY> [--links] [--fields <a,b,c>], create [--parent <KEY>], edit <KEY>, transition <KEY> --to <status>, assign <KEY> --assignee <user>, comment <KEY> --body <text>, search "<JQL>", link <KEY> --to <KEY> --type <name|phrase>, unlink <KEY> --from <KEY> | --id <n>, list-links <KEY>, link-types
 project:
