@@ -161,7 +161,7 @@ describe("sign-in: where a new sign-in goes (release A)", () => {
     expect(ran.exit, ran.out).toBe(0);
     expect(ran.out).toContain("token-store: file");
     expect(ran.out).toContain(
-      "sign_in: Your sign-in is kept in a private file on this computer, as it was before the password store was used.",
+      "sign_in: Your sign-in is kept in a private file on this computer.",
     );
     // Byte for byte what the release before this one writes, so it reads it.
     expect(settings()).toEqual({ site: SITE, email: EMAIL, token: SECRET });
@@ -591,9 +591,7 @@ describe("auth status --check: the sign_in_store row", () => {
   it("file, from before the standard, and no password store here", async () => {
     await login();
     const ran = await tool("auth", "status", "--check");
-    expect(ran.out).toContain(
-      "sign_in_store: private file, as it was before the password store was used",
-    );
+    expect(ran.out).toMatch(/^\s*sign_in_store: private file$/m);
   });
 });
 
@@ -663,7 +661,7 @@ describe("auth store keyring | file", () => {
     const ran = await tool("auth", "store", "keyring");
     expect(ran.exit, ran.out).toBe(0);
     expect(ran.out.split("\n")[0]).toBe(
-      `sign_in: Your sign-in is kept in a private file on this computer, as it was before the password store was used. It was not moved: this computer's password store could not be used (${code}).`,
+      `sign_in: Your sign-in is kept in a private file on this computer. It was not moved: this computer's password store could not be used (${code}).`,
     );
     expect(ran.out).toContain("moved: no");
     expect(ran.out).toContain("why: Your sign-in is kept in this computer's password store");

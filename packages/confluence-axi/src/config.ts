@@ -1095,10 +1095,12 @@ export interface SignInStoreRow {
   next?: string;
 }
 
-/** `private file, because ...`: the standard's own words for a reason. */
+/** `private file, because ...`: the standard's own words for a reason; just `private file` with none. */
 function fileWords(reason: string | undefined): string {
   const sentence = describeStore({ store: "file", ...(reason ? { reason } : {}) });
-  return `private file, ${sentence.slice(sentence.indexOf(", ") + 2).replace(/\.$/, "")}`;
+  const comma = sentence.indexOf(", ");
+  if (comma < 0) return "private file";
+  return `private file, ${sentence.slice(comma + 2).replace(/\.$/, "")}`;
 }
 
 /**

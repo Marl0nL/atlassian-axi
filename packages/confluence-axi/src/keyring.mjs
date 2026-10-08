@@ -1,4 +1,4 @@
-// reposit-keyring-client 1.0.0
+// reposit-keyring-client 1.0.1
 //
 // The shared keyring client of the Reposit keyring standard (keyring/STANDARD.md in
 // the staff-agent-toolkit repository). One file, Node 22, nothing but what Node ships with.
@@ -19,7 +19,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.0.1";
 
 const LIMIT_MS = 3000; // every keyring call in an everyday command
 const MAX_LIMIT_MS = 10000;
@@ -848,7 +848,8 @@ const WHY_FILE = {
 /** One plain sentence saying where a sign-in is kept: for sign-in itself, setup's summary, auth status and doctor. */
 export function describeStore(saved) {
   if (saved.store === "keyring") return `Your sign-in is kept in this computer's password store${saved.provider ? ` (${saved.provider})` : ""}.`;
-  return `Your sign-in is kept in a private file on this computer, ${WHY_FILE[saved.reason] ?? "as it was before the password store was used"}.`;
+  const why = WHY_FILE[saved.reason];
+  return `Your sign-in is kept in a private file on this computer${why ? `, ${why}` : ""}.`;
 }
 
 /**
