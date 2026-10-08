@@ -54,6 +54,9 @@ Use confluence-axi whenever a task touches Confluence: reading a page's body by 
 The dashboard, \`auth\`, the direct-REST \`page\`/\`space\`/\`search\` commands, and \`setup hooks\` work today. (The inherited \`update\` command exists but is PROHIBITED on this fork - see Invocation.)
 Auth has two modes: \`auth login\` runs an OAuth browser flow (humans, interactive terminals; tokens auto-refresh), and \`auth login --token\` takes site + email + API token via stdin (agents/CI - use this one; the OAuth flow fails fast without a TTY).
 Resolution order: \`ATLASSIAN_API_TOKEN\` env > OAuth session > stored API token.
+The stored API token is kept in a private file, or, when a person chose it (\`auth login --token --store keyring\` or \`auth store keyring\`), in this computer's password store. It is read from that one place and no other.
+If a command fails with \`KEYRING_LOCKED\`, \`KEYRING_BLOCKED\`, \`KEYRING_UNAVAILABLE\`, \`KEYRING_FAILED\`, \`SIGN_IN_MISSING\`, \`SIGN_IN_MISMATCH\` or \`SIGN_IN_STORE_UNKNOWN\`, the saved sign-in could not be read from where it is kept: do what the error's help line says and do NOT look for the token anywhere else. \`KEYRING_BLOCKED\` means you are inside a sandbox, which cannot reach the password store: this tool has no hourly pass to renew, so run the same command outside the sandbox.
+Never run \`auth login\`, \`auth store\` or \`auth logout\` unless the operator asks: they change where the sign-in is kept, and a person runs them.
 OAuth needs your own registered 3LO app: set \`ATLASSIAN_AXI_OAUTH_CLIENT_ID\` (and the client secret via \`ATLASSIAN_AXI_OAUTH_CLIENT_SECRET\` or the one-time prompt).
 The CLI calls the Confluence Cloud REST API directly (via \`api.atlassian.com\` in OAuth mode) - no extra setup.
 
@@ -63,7 +66,7 @@ The CLI calls the Confluence Cloud REST API directly (via \`api.atlassian.com\` 
 commands[6]:
   (none)=dashboard, auth, page, space, search, setup
 auth:
-  login, login --token --site <site> --email <email> (token via stdin), status, logout
+  login, login --token --site <site> --email <email> [--store <auto|keyring|file>] (token via stdin), status [--check], store <keyring|file>, logout
 page:
   get <id> [--full] [--format storage|adf], create --space <KEY> --title <text> (--body <text> | --body-file <path>) [--parent <id>], update <id> [--title <text>] [--body <text> | --body-file <path>] [--allow-macro-loss], delete <id>, attachments <id> [--limit <n>] [--media-type <type>] [--filename <name>], labels <id> [--add|--remove <name,name,...>] [--prefix <my|team|global|system> (list only)] [--limit <n> (list only)], children <id> [--limit <n>]
 space:
@@ -87,6 +90,7 @@ Run \`confluence-axi setup hooks\` to install SessionStart ambient context (requ
 - \`search\` uses v1 CQL (the v2 API has no search); use it to find page ids to feed \`page get\`.
 - \`page labels <id>\` with no flags lists labels (narrow the listing with \`--prefix <my|team|global|system>\`); \`--add\`/\`--remove\` are idempotent, mutually exclusive, and manage global-prefix labels only: already-present/absent names are reported, and the full post-mutation label set is rendered.
 - \`page attachments <id>\` is read-only (filter with --filename/--media-type); upload attachments in the Confluence UI.
+- \`auth status\` and the dashboard never ask the password store; with the sign-in kept there they say \`sign_in: password store\` and check nothing. \`auth status --check\` is the one check that reads it (outside a sandbox). The one exception, unchanged from before: on a Mac, a sign-in from before \`--store\` existed sits in this tool's old keychain item, which every command still reads.
 - \`--site <site>\` (after the command) retargets the request to another instance the account can reach; an account-scoped API token serves every reachable instance.
 `;
 }

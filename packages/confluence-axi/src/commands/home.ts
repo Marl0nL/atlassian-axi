@@ -6,6 +6,7 @@ import {
   type SiteContext,
 } from "@atlassian-axi/core";
 import { resolveAuthMode } from "../config.js";
+import { AxiError } from "../errors.js";
 import { confluenceJson } from "../confluence.js";
 import { getSuggestions } from "../suggestions.js";
 import {
@@ -38,6 +39,9 @@ export async function homeCommand(
   const site = ctx?.site ?? auth.site;
   blocks.push(site ? `site: ${site}` : "site: not configured");
   blocks.push(`auth: ${auth.line}`);
+  if (auth.signIn) {
+    blocks.push(`sign_in: ${auth.signIn}`);
+  }
 
   if (auth.configured) {
     // Best-effort, budget-capped: a slow Confluence API must not stall every
@@ -123,29 +127,52 @@ interface AuthState {
   configured: boolean;
   /** Site of the resolved credential (either auth mode); undefined when none. */
   site?: string;
+  /** Where the sign-in is kept, in the short form, from the settings alone. */
+  signIn?: string;
 }
 
 /**
  * Best-effort auth summary for the ambient dashboard. Never throws (a thrown
  * error would poison every session's SessionStart block) and does no network:
  * it reports whether a full credential resolves.
+ *
+ * It NEVER asks this computer's password store (`askStore: false`): a session
+ * start must not wait on one, and inside an agent sandbox it could not be
+ * reached anyway. A sign-in kept there is said from the settings alone, and
+ * the spaces block, which needs the token, is left out.
  */
 async function resolveAuthState(): Promise<AuthState> {
   try {
-    const mode = await resolveAuthMode();
-    const configured = mode.mode !== "none";
-    if (!configured) {
-      return { line: "not configured", configured };
+    const mode = await resolveAuthMode({ askStore: false });
+    if (mode.mode === "none") {
+      return { line: "not configured", configured: false };
+    }
+    if (mode.mode === "api-token-unread") {
+      return {
+        line: "signed in (api-token, not read here: run `confluence-axi auth status --check` to verify)",
+        configured: false,
+        site: mode.site,
+        signIn: mode.signIn,
+      };
     }
     const modeLabel = mode.mode === "oauth" ? "oauth" : "api-token";
     const site =
       mode.mode === "oauth" ? mode.oauth.site : mode.credential.site;
     return {
       line: `ok (${modeLabel} — run \`confluence-axi auth status\` to verify)`,
-      configured,
+      configured: true,
       ...(site ? { site } : {}),
+      ...(mode.signIn ? { signIn: mode.signIn } : {}),
     };
-  } catch {
+  } catch (error) {
+    // The saved sign-in could not be read from where it is kept (the
+    // standard's codes): say which, not "not configured".
+    if (error instanceof AxiError && /^(KEYRING|SIGN_IN)_/.test(error.code)) {
+      return {
+        line: `needs attention (${error.code}: run \`confluence-axi auth status --check\`)`,
+        configured: false,
+      };
+    }
     return { line: "not configured", configured: false };
   }
 }
