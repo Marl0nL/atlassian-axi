@@ -22,10 +22,10 @@ import { VERSION, fingerprint, signInError } from "../src/keyring.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const CLIENT_VERSION = "1.0.0";
+const CLIENT_VERSION = "1.0.1";
 const PINNED = {
-  "src/keyring.mjs": "9f59eacfb46304e44d6cf846f75016e51525bf51f720a6d1af75350ad3532308",
-  "src/keyring.d.mts": "3f088a15f62bb4b36964be6ad4dcc74627b56e730334145bb1b2be6cbfa68b8e",
+  "src/keyring.mjs": "0197aca8bd8c6190cf85c882df9f6a34f3405121ed2ff3251e0a79264c05fcf0",
+  "src/keyring.d.mts": "4b19ed3429f91dcab25393de041ed7b315a38a73c3203905edb92b622e9ac7ab",
   "src/test-support/fake-bus.mjs":
     "c30e37bce3fbc23cf34e198b1ced8fbe69e73cbd14053c6ef83a2a7c93b2809c",
 };

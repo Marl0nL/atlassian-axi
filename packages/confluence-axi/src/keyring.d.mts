@@ -1,4 +1,4 @@
-// Types for keyring.mjs (reposit-keyring-client 1.0.0). Copied with it, never edited in a copy.
+// Types for keyring.mjs (reposit-keyring-client 1.0.1). Copied with it, never edited in a copy.
 
 export declare const VERSION: string;
 
