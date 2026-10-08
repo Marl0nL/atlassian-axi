@@ -1,9 +1,15 @@
 import { takeBoolFlag, takeValueFlag } from "@atlassian-axi/core";
 import {
   type AtlassianCredential,
+  type MovedSignIn,
   type OAuthSession,
+  type SignInPlace,
+  type SignInStoreRow,
+  type StoreChoice,
   clearCredential,
   isInteractiveTTY,
+  moveSignInToFile,
+  moveSignInToPasswordStore,
   normalizeSite,
   readOAuthSession,
   readTokenFromStdin,
@@ -13,6 +19,7 @@ import {
   sanitizeToken,
   saveCredential,
   saveOAuthSession,
+  signInStoreRow,
 } from "../config.js";
 import { AxiError } from "../errors.js";
 import {
@@ -37,7 +44,7 @@ import { renderHelp, renderOutput } from "@atlassian-axi/core";
  */
 export const DEFAULT_SITE = "repositpower.atlassian.net";
 
-export const AUTH_HELP = `usage: confluence-axi auth <login|status|logout> [flags]
+export const AUTH_HELP = `usage: confluence-axi auth <login|status|store|logout> [flags]
 Manage Confluence auth. Two modes:
   oauth      browser login (the default \`auth login\`) — Bearer tokens against
              api.atlassian.com, auto-refreshed; needs an interactive terminal.
@@ -51,20 +58,61 @@ login            OAuth browser login. Opens auth.atlassian.com, catches the
                  Requires your own registered 3LO app (no shipped default):
                  ATLASSIAN_AXI_OAUTH_CLIENT_ID (required) + client secret from
                  ATLASSIAN_AXI_OAUTH_CLIENT_SECRET env or prompted once and stored.
+                 Always kept in the 0600 config file: Atlassian replaces its
+                 secret on every renewal, which only a file can follow.
 login --token    API-token login (no browser).
                  --site <site>   falls back to ATLASSIAN_SITE / stored, then ${DEFAULT_SITE}
                  --email <email> account email (falls back to ATLASSIAN_EMAIL / stored)
+                 --store <auto|keyring|file>  where the token is kept:
+                     auto     (the default) where the settings already say it is
+                              kept; for a new sign-in the 0600 config file, or on
+                              a Mac the keychain item this tool has always used
+                     keyring  this computer's password store. Refused, with
+                              nothing saved, when it cannot be used from here
+                     file     the 0600 config file, recorded as chosen
                  at a terminal: confluence-axi auth login --token --email e   (asks for the token, hidden)
                  token via stdin: echo -n "<token>" | confluence-axi auth login --token --site s --email e
-status           Active mode, token expiry, and the Confluence REST half.
-logout           Clear OAuth tokens + API credential/keychain.
+status           Active mode, where the sign-in is kept, token expiry, and the
+                 Confluence REST half. It never asks this computer's password
+                 store: with the token kept there it says so and checks nothing.
+status --check   The same, and the one check that does ask the password store:
+                 the sign_in_store row says whether the sign-in can be read from
+                 where it is kept (3 seconds at most, never a password window).
+                 Exits 1 when it cannot.
+store keyring    Move the API-token sign-in into this computer's password store.
+                 The config file then holds no token, only where it is and a
+                 fingerprint of it. If the password store cannot be used (none in
+                 this session, locked and not unlocked, out of reach), NOTHING
+                 changes: the sign-in stays where it is, and this says why.
+store file       Move it back into the 0600 config file, then out of the
+                 password store. Do this before going back to a version of the
+                 tool with no \`auth store\`: it reads only the file.
+logout           Clear OAuth tokens + the API-token sign-in, wherever it is kept.
 
 Resolution order: ATLASSIAN_API_TOKEN env > OAuth session > stored API token.
+The stored API token is read from the one place the settings say it is kept. A
+password store that is locked or out of reach is an error, never a reason to
+look somewhere else.
+
+Where the sign-in is kept is not a security boundary: any program running as
+you can ask an unlocked password store for it, as it can read the file. What
+the password store changes is that the token is not a file to stumble on and is
+not in a backup of the settings folder. The cost in this tool: an API token is
+needed on every request and there is no hourly pass to fall back on, so with the
+token in the password store NO command works inside a Linux agent sandbox, which
+cannot reach the store. A person runs \`auth login\` and \`auth store\`, outside
+any sandbox: they change the settings folder.
+Linux with GNOME Keyring is tested. A Mac's keychain is untested: nobody has run
+this there. Windows is not supported.
 
 examples:
   confluence-axi auth login
   echo -n "$TOKEN" | confluence-axi auth login --token --site acme.atlassian.net --email me@acme.com
+  confluence-axi auth login --token --email me@acme.com --store keyring
   confluence-axi auth status
+  confluence-axi auth status --check
+  confluence-axi auth store keyring
+  confluence-axi auth store file
   confluence-axi auth logout
 `;
 
@@ -84,8 +132,9 @@ export async function authCommand(args: string[]): Promise<string> {
     case "login":
       return authLogin(rest);
     case "status":
-      rejectExtraArgs("status", rest);
-      return authStatus();
+      return authStatus(rest);
+    case "store":
+      return authStore(rest);
     case "logout":
       // logout is destructive; a stray/typo'd flag (e.g. `--dry-run`) must be a
       // loud error, never silently accepted while it clears every credential.
@@ -95,7 +144,7 @@ export async function authCommand(args: string[]): Promise<string> {
       throw new AxiError(
         `Unknown auth action: ${action}`,
         "VALIDATION_ERROR",
-        ["Run `confluence-axi auth <login|status|logout>`"],
+        ["Run `confluence-axi auth --help` to see the auth actions: login, status, store, logout"],
       );
   }
 }
@@ -152,9 +201,25 @@ async function oauthLogin(args: string[]): Promise<string> {
   // as the flag missing its value rather than silently taking "--email" as the
   // site and blaming the leftover email for the failure.
   const siteFlag = normalizeSite(takeValueFlag(args, "--site"));
+  const store = takeStoreFlag(args);
   // Before the TTY check, so a mistyped `--tokn` is named as the real problem
   // instead of being reported as a missing interactive terminal.
-  rejectLeftoverLoginArgs(args, ["--token", "--site", "--email (with --token)"]);
+  rejectLeftoverLoginArgs(args, [
+    "--token",
+    "--site",
+    "--email (with --token)",
+    "--store (with --token)",
+  ]);
+  if (store === "keyring") {
+    throw new AxiError(
+      "A browser sign-in cannot be kept in this computer's password store: Atlassian replaces its secret on every renewal, which only a file can follow",
+      "VALIDATION_ERROR",
+      [
+        "Run `confluence-axi auth login` to keep the browser sign-in in its private file",
+        "Run `confluence-axi auth login --token --store keyring` to sign in with an API token kept in the password store",
+      ],
+    );
+  }
 
   // Fail fast for agents/CI before any listener/browser/prompt work: a
   // headless invocation must never hang waiting on a browser.
@@ -287,12 +352,14 @@ async function pickResource(
 async function tokenLogin(args: string[]): Promise<string> {
   const siteFlag = takeValueFlag(args, "--site");
   const emailFlag = takeValueFlag(args, "--email");
+  const store = takeStoreFlag(args);
   // Before stdin is read, so a typo'd flag never consumes the piped token.
-  rejectLeftoverLoginArgs(args, ["--token", "--site", "--email"]);
+  rejectLeftoverLoginArgs(args, ["--token", "--site", "--email", "--store"]);
 
   // Flags win, then fall back to any already-resolved (env/stored) values so a
-  // re-login only needs to supply what changed.
-  const resolved = await resolveCredential();
+  // re-login only needs to supply what changed. The saved token is NOT read:
+  // signing in again must work when it cannot be (a locked password store).
+  const resolved = await resolveCredential({ storedSecret: false });
   const site = normalizeSite(siteFlag ?? resolved.site ?? DEFAULT_SITE);
   const email = (emailFlag ?? resolved.email)?.trim();
 
@@ -323,7 +390,10 @@ async function tokenLogin(args: string[]): Promise<string> {
   // previously good stored credential.
   const confluenceLine = await validateTokenForLogin(credential);
 
-  const { tokenStore } = await saveCredential(credential);
+  // `--store keyring` that cannot be had is refused here, with nothing saved.
+  const saved = store
+    ? await saveCredential(credential, { store })
+    : await saveCredential(credential);
 
   return renderOutput([
     [
@@ -332,11 +402,32 @@ async function tokenLogin(args: string[]): Promise<string> {
       `  mode: api-token`,
       `  site: ${site}`,
       `  email: ${email}`,
-      `  token-store: ${tokenStore}`,
+      `  token-store: ${saved.tokenStore}`,
+      ...(saved.sentence ? [`  sign_in: ${saved.sentence}`] : []),
+      ...(saved.notes ?? []).map((note) => `  note: ${note}`),
       `  confluence: ${confluenceLine}`,
     ].join("\n"),
-    renderHelp(["Verify end-to-end with `confluence-axi auth status`"]),
+    renderHelp([
+      saved.tokenStore === "password-store"
+        ? "Verify end-to-end with `confluence-axi auth status --check`"
+        : "Verify end-to-end with `confluence-axi auth status`",
+    ]),
   ]);
+}
+
+/** `--store auto|keyring|file`, or undefined when the flag is not given. */
+function takeStoreFlag(args: string[]): StoreChoice | undefined {
+  const value = takeValueFlag(args, "--store");
+  if (value === undefined) return undefined;
+  if (value === "auto" || value === "keyring" || value === "file") return value;
+  throw new AxiError(
+    `--store takes auto, keyring or file, not ${value}`,
+    "VALIDATION_ERROR",
+    [
+      "Run `confluence-axi auth login --token --store keyring` to keep the sign-in in this computer's password store",
+      "Run `confluence-axi auth login --token --store file` to keep it in a private file",
+    ],
+  );
 }
 
 /**
@@ -385,8 +476,20 @@ async function validateTokenForLogin(
 // status
 // ---------------------------------------------------------------------------
 
-async function authStatus(): Promise<string> {
-  const mode = await resolveAuthMode();
+async function authStatus(args: string[]): Promise<string> {
+  const check = takeBoolFlag(args, "--check");
+  rejectExtraArgs("status", args);
+  // `--check` is the one place this command asks the password store. Its row
+  // comes first: when the sign-in cannot be read, that is the whole answer.
+  const row = check ? await signInStoreRow() : undefined;
+  if (row?.counts === "needs-attention") {
+    throw new AxiError(
+      `auth check failed\n${["auth:", "  status: degraded", `  sign_in_store: ${row.detail}`].join("\n")}`,
+      row.code ?? "AUTH_REQUIRED",
+      row.next ? [row.next] : [],
+    );
+  }
+  const mode = await resolveAuthMode({ askStore: check });
   if (mode.mode === "none") {
     throw new AxiError(
       `Not authenticated (missing: ${mode.missing.join(", ")})`,
@@ -397,12 +500,45 @@ async function authStatus(): Promise<string> {
       ],
     );
   }
+  if (mode.mode === "api-token-unread") {
+    // Said from the settings alone. Nothing is read, so nothing is checked.
+    return renderOutput([
+      [
+        "auth:",
+        `  status: not checked`,
+        `  mode: api-token`,
+        `  site: ${mode.site}`,
+        `  email: ${mode.email}`,
+        `  token: in this computer's password store (not read by this command)`,
+        `  sign_in: ${mode.signIn}`,
+        `  confluence: not checked`,
+      ].join("\n"),
+      renderHelp([
+        "Run `confluence-axi auth status --check` to read the sign-in from the password store and check Confluence (outside a sandbox)",
+      ]),
+    ]);
+  }
+  const kept = keptLines(mode.signIn, row);
   return mode.mode === "oauth"
-    ? oauthStatus(mode.oauth)
-    : tokenStatus(mode.credential, mode.sources.apiToken ?? "config");
+    ? oauthStatus(mode.oauth, kept)
+    : tokenStatus(mode.credential, mode.sources.apiToken ?? "config", kept);
 }
 
-async function oauthStatus(session: OAuthSession): Promise<string> {
+/** Where the sign-in is kept: the short form always, the checked row with `--check`. */
+function keptLines(
+  signIn: SignInPlace | undefined,
+  row: SignInStoreRow | undefined,
+): string[] {
+  return [
+    ...(signIn ? [`  sign_in: ${signIn}`] : []),
+    ...(row ? [`  sign_in_store: ${row.detail}`] : []),
+  ];
+}
+
+async function oauthStatus(
+  session: OAuthSession,
+  kept: string[] = [],
+): Promise<string> {
   // Refresh if expired so status exercises the same path real calls use; a
   // failed refresh is the honest "your session is dead" signal.
   let active = session;
@@ -431,6 +567,7 @@ async function oauthStatus(session: OAuthSession): Promise<string> {
     `  site: ${active.site}`,
     `  cloud-id: ${active.cloudId}`,
     `  token: ${tokenLine}`,
+    ...kept,
     `  confluence: ${rest.ok ? "200 ok" : `${rest.status} ${rest.detail}`}`,
   ].join("\n");
 
@@ -447,6 +584,7 @@ async function oauthStatus(session: OAuthSession): Promise<string> {
 async function tokenStatus(
   credential: AtlassianCredential,
   tokenSource: string,
+  kept: string[] = [],
 ): Promise<string> {
   // Confluence REST half — a cheap authenticated call.
   const rest = await confluencePing(credential);
@@ -459,6 +597,7 @@ async function tokenStatus(
     `  site: ${credential.site}`,
     `  email: ${credential.email}`,
     `  token: present (${tokenSource})`,
+    ...kept,
     `  confluence: ${rest.ok ? "200 ok" : `${rest.status} ${rest.detail}`}`,
   ].join("\n");
 
@@ -553,7 +692,7 @@ function expiryPhrase(expiresAt: number): string {
 
 async function authLogout(): Promise<string> {
   const hadOAuth = readOAuthSession() !== null;
-  await clearCredential();
+  const cleared = await clearCredential();
 
   return renderOutput([
     [
@@ -561,6 +700,72 @@ async function authLogout(): Promise<string> {
       `  action: logout`,
       `  credential: cleared`,
       `  oauth: ${hadOAuth ? "cleared" : "none stored"}`,
+      ...(cleared?.item === "removed"
+        ? [`  password_store: the sign-in was removed from this computer's password store`]
+        : []),
+      ...(cleared?.item === "left"
+        ? [
+            `  password_store: the sign-in could NOT be removed from this computer's password store (${cleared.why}). The settings are gone, so it is not used. To remove it yourself, look for "${cleared.label}"`,
+          ]
+        : []),
     ].join("\n"),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// store keyring | file
+// ---------------------------------------------------------------------------
+
+const CHECK = "Run `confluence-axi auth status --check` to check the sign-in where it is kept";
+
+async function authStore(args: string[]): Promise<string> {
+  const to = args[0];
+  if (args.length !== 1 || (to !== "keyring" && to !== "file")) {
+    throw new AxiError(
+      to === undefined
+        ? "Say where to move the sign-in: keyring (this computer's password store) or file"
+        : `\`auth store\` takes keyring or file and nothing else, not ${args.join(" ")}`,
+      "VALIDATION_ERROR",
+      [
+        "Run `confluence-axi auth store keyring` to keep the sign-in in this computer's password store",
+        "Run `confluence-axi auth store file` to keep it in a private file",
+      ],
+    );
+  }
+  const result =
+    to === "keyring" ? await moveSignInToPasswordStore() : await moveSignInToFile();
+  return renderOutput([renderMoved(result), renderHelp(moveHelp(to, result))]);
+}
+
+/**
+ * The sentence comes FIRST: `reposit-agent-tools update` shows a person the
+ * first line of what a move step prints, and nothing else.
+ */
+function renderMoved(result: MovedSignIn): string {
+  return [
+    `sign_in: ${result.sentence}`,
+    `moved: ${result.moved ? "yes" : "no"}`,
+    ...(result.why ? [`why: ${result.why}`] : []),
+    ...result.notes.map((note) => `note: ${note}`),
+  ].join("\n");
+}
+
+function moveHelp(to: "keyring" | "file", result: MovedSignIn): string[] {
+  if (to === "keyring") {
+    if (result.moved) {
+      return [CHECK, "Run `confluence-axi auth store file` to move the sign-in back"];
+    }
+    return result.why
+      ? [
+          "Run `confluence-axi auth store keyring` again from your desktop session, with the password store unlocked, to move it",
+          CHECK,
+        ]
+      : [CHECK];
+  }
+  return result.moved
+    ? [
+        "Run `confluence-axi auth status` to check the sign-in",
+        "Run `confluence-axi auth store keyring` to move the sign-in into this computer's password store again",
+      ]
+    : [CHECK];
 }
