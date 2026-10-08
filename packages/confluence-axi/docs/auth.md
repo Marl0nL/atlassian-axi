@@ -71,6 +71,7 @@ It never falls back to a file.
 An API token is sent with every request, and there is no hourly pass to fall back on.
 So with the token in the password store, **every command that talks to Confluence asks the password store, and none of them works inside a Linux agent sandbox**, which cannot reach it.
 `auth status` and the no-argument dashboard are the exceptions: they never ask the password store, and say where the sign-in is from the settings file alone.
+(One exception to that, unchanged from before: on a Mac, a sign-in from before `--store` existed is still in this tool's old keychain item, and every command, these two included, reads it there as it always did, with a 3 second limit. `auth store keyring` moves it to the standard item, after which they stop asking.)
 If your agent runs this tool inside a sandbox, keep the sign-in in the file.
 
 ### What this protects, and what it does not
@@ -161,7 +162,7 @@ confluence-axi auth status --check
 **Caveats:**
 - Read-only; safe to run repeatedly.
 - The overall ok/degraded verdict gates on the Confluence REST ping.
-- Without `--check` it never asks the password store. With the token kept there it cannot ping Confluence either, and says `status: not checked` (exit 0): run `auth status --check` outside a sandbox for the real answer.
+- Without `--check` it never asks the password store (the old Mac keychain item excepted, as above). With the token kept there it cannot ping Confluence either, and says `status: not checked` (exit 0): run `auth status --check` outside a sandbox for the real answer.
 - For a sign-in still in the file, `--check` says when a password store is available to move it to, and what that costs.
 
 ## `confluence-axi auth store keyring` / `auth store file`

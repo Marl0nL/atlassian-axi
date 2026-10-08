@@ -75,6 +75,8 @@ login --token    API-token login (no browser).
 status           Active mode, where the sign-in is kept, token expiry, and the
                  Confluence REST half. It never asks this computer's password
                  store: with the token kept there it says so and checks nothing.
+                 (One exception, as before: a Mac sign-in from before --store
+                 existed, in this tool's old keychain item, is still read.)
 status --check   The same, and the one check that does ask the password store:
                  the sign_in_store row says whether the sign-in can be read from
                  where it is kept (3 seconds at most, never a password window).

@@ -90,7 +90,7 @@ Run \`confluence-axi setup hooks\` to install SessionStart ambient context (requ
 - \`search\` uses v1 CQL (the v2 API has no search); use it to find page ids to feed \`page get\`.
 - \`page labels <id>\` with no flags lists labels (narrow the listing with \`--prefix <my|team|global|system>\`); \`--add\`/\`--remove\` are idempotent, mutually exclusive, and manage global-prefix labels only: already-present/absent names are reported, and the full post-mutation label set is rendered.
 - \`page attachments <id>\` is read-only (filter with --filename/--media-type); upload attachments in the Confluence UI.
-- \`auth status\` and the dashboard never ask the password store; with the sign-in kept there they say \`sign_in: password store\` and check nothing. \`auth status --check\` is the one check that reads it (outside a sandbox).
+- \`auth status\` and the dashboard never ask the password store; with the sign-in kept there they say \`sign_in: password store\` and check nothing. \`auth status --check\` is the one check that reads it (outside a sandbox). The one exception, unchanged from before: on a Mac, a sign-in from before \`--store\` existed sits in this tool's old keychain item, which every command still reads.
 - \`--site <site>\` (after the command) retargets the request to another instance the account can reach; an account-scoped API token serves every reachable instance.
 `;
 }
