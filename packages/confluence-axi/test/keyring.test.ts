@@ -1,16 +1,19 @@
 /**
  * The shared client of the Reposit keyring standard is a COPY: src/keyring.mjs
- * and src/keyring.d.mts are taken byte for byte from keyring/ in
- * Marl0nL/staff-agent-toolkit and never edited here. A fix is made there, its
+ * and src/keyring.d.mts are taken byte for byte from
+ * RepositPower/reposit-agent-keyring and never edited here. A fix is made there, its
  * version goes up, and both files are copied again in a commit that says which
- * version; then the hashes below change with them. That repository's packaging
- * compares the bytes again before a release (`keyring_copy_in_step`).
+ * version; then the hashes below change with them. The packaging in
+ * RepositPower/reposit-agent-tools compares the bytes again before a release
+ * (`keyring_copy_in_step`).
  *
  * The stand-in bus the unit tests run the client against
  * (src/test-support/fake-bus.mjs) is the same kind of copy, of
- * keyring/test/fake-bus.mjs.
+ * test/fake-bus.mjs.
  *
- * Copied from staff-agent-toolkit at c381a1e (the standard, version 1).
+ * Copied from Marl0nL/staff-agent-toolkit at c381a1e (the standard, version 1),
+ * when it was the keyring/ folder there; it moved to
+ * RepositPower/reposit-agent-keyring on 9 November 2026.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

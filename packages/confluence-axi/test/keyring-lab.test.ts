@@ -7,7 +7,7 @@
  *
  * Run twice: from the source, and from THE PACKAGE, built here with the
  * command `build_atlassian` runs in scripts/package-tools of
- * Marl0nL/staff-agent-toolkit (`pnpm build`, which is `tsup`). Staff get the
+ * RepositPower/reposit-agent-tools (`pnpm build`, which is `tsup`). Staff get the
  * package, and the copied client must behave the same once tsup has bundled
  * it. Set CONFLUENCE_AXI_LAB_BIN to a `dist/bin/confluence-axi.js` that
  * packaging itself produced to run the second pass against that file.

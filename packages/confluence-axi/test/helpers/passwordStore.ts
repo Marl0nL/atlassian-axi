@@ -6,7 +6,7 @@
  * (src/keyring.mjs, the bytes staff get) runs against
  *  - `startStore()`: the toolkit's stand-in session bus
  *    (src/test-support/fake-bus.mjs, a byte-for-byte copy of
- *    keyring/test/fake-bus.mjs in Marl0nL/staff-agent-toolkit), on a socket in
+ *    test/fake-bus.mjs in RepositPower/reposit-agent-keyring), on a socket in
  *    a throwaway folder; and
  *  - `startMac()`: a stand-in for /usr/bin/security, as that repository's
  *    macos.test.mjs builds one. THIS IS NOT A TEST ON A MAC.

@@ -3,7 +3,8 @@
  * throwaway home, for the one test that meets a real password store
  * (test/keyring-lab.test.ts).
  *
- * A port of keyring/test/lab.mjs in Marl0nL/staff-agent-toolkit (at c381a1e),
+ * A port of test/lab.mjs in RepositPower/reposit-agent-keyring (keyring/test/lab.mjs in
+ * Marl0nL/staff-agent-toolkit at c381a1e, where it was until 9 November 2026),
  * with the same rules. Nothing here can reach the desktop's real password
  * store: the lab's processes are started with an environment MADE FROM
  * NOTHING (no inherited bus address, no display, a new HOME and a new
