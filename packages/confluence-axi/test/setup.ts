@@ -6,7 +6,7 @@ import { SEALED } from "./helpers/sealed.js";
 
 // NEVER A REAL PASSWORD STORE. Pointing HOME somewhere else does not move it:
 // the session bus address decides which one answers. So, before anything else
-// runs (as keyring/test/safe.mjs does in Marl0nL/staff-agent-toolkit): no bus
+// runs (as test/safe.mjs does in RepositPower/reposit-agent-keyring): no bus
 // address, no display, and a runtime folder that is not there.
 for (const name of [
   "DBUS_SESSION_BUS_ADDRESS",
